@@ -1,71 +1,89 @@
-const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken");
-const User = require("../models/user.model");
+const authService = require("../services/auth.service");
 
+/**
+ * Register
+ * POST /api/auth/register
+ */
 const register = async (req, res, next) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, role } = req.body;
 
-    // Validate required fields
+    // Basic validation
     if (!name || !email || !password) {
-      return res.status(400).json({
-        success: false,
-        message: "Name, email and password are required",
-      });
+      const error = new Error(
+        "Name, email and password are required"
+      );
+
+      error.statusCode = 400;
+
+      throw error;
     }
 
-    // Check password length
-    if (password.length < 6) {
-      return res.status(400).json({
-        success: false,
-        message: "Password must be at least 6 characters",
-      });
-    }
-
-    // Check if user already exists
-    const existingUser = await User.findOne({ email });
-
-    if (existingUser) {
-      return res.status(409).json({
-        success: false,
-        message: "User with this email already exists",
-      });
-    }
-
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Create user
-    const user = await User.create({
+    const result = await authService.register({
       name,
       email,
-      password: hashedPassword,
-      role: "staff",
+      password,
+      role,
     });
-
-    // Generate JWT
-    const token = jwt.sign(
-      {
-        userId: user._id,
-        role: user.role,
-      },
-      process.env.JWT_SECRET,
-      {
-        expiresIn: "1d",
-      }
-    );
 
     res.status(201).json({
       success: true,
       message: "User registered successfully",
+      data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Login
+ * POST /api/auth/login
+ */
+const login = async (req, res, next) => {
+  try {
+    const { email, password } = req.body;
+
+    // Basic validation
+    if (!email || !password) {
+      const error = new Error(
+        "Email and password are required"
+      );
+
+      error.statusCode = 400;
+
+      throw error;
+    }
+
+    const result = await authService.login({
+      email,
+      password,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Login successful",
+      data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get current authenticated user
+ * GET /api/auth/me
+ */
+const getMe = async (req, res, next) => {
+  try {
+    const user = await authService.getMe(
+      req.user.userId
+    );
+
+    res.status(200).json({
+      success: true,
       data: {
-        user: {
-          id: user._id,
-          name: user.name,
-          email: user.email,
-          role: user.role,
-        },
-        token,
+        user,
       },
     });
   } catch (error) {
@@ -75,4 +93,6 @@ const register = async (req, res, next) => {
 
 module.exports = {
   register,
+  login,
+  getMe,
 };
