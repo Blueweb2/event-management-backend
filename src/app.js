@@ -6,6 +6,11 @@ const userRoutes = require("./routes/user.routes");
 const eventRoutes = require("./routes/event.routes");
 const serviceRoutes = require("./routes/service.routes");
 const estimateRoutes = require("./routes/estimate.routes");
+const staffRoutes = require("./routes/staff.routes");
+const assignmentRoutes = require("./routes/assignment.routes");
+const taskRoutes = require("./routes/task.routes");
+const availabilityRoutes = require("./routes/availability.routes");
+const attendanceRoutes = require("./routes/attendance.routes");
 
 const notFound = require("./middlewares/notFound.middleware");
 const errorHandler = require("./middlewares/error.middleware");
@@ -34,6 +39,30 @@ app.use("/api/users", userRoutes);
 app.use("/api/services", serviceRoutes);
 
 app.use("/api/estimates", estimateRoutes);
+app.use(
+  "/api/users/staff",
+  staffRoutes
+);
+app.use(
+  "/api/assignments",
+  assignmentRoutes
+);
+
+app.use(
+  "/api/tasks",
+  taskRoutes
+);
+
+app.use(
+  "/api/availability",
+  availabilityRoutes
+);
+
+app.use(
+  "/api/attendance",
+  attendanceRoutes
+);
+
 
 // 404 handler
 app.use(notFound);

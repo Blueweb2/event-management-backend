@@ -6,12 +6,17 @@ const authService = require("../services/auth.service");
  */
 const register = async (req, res, next) => {
   try {
-    const { name, email, password, role } = req.body;
+    const {
+      name,
+      username,
+      email,
+      password,
+      role,
+    } = req.body;
 
-    // Basic validation
-    if (!name || !email || !password) {
+    if (!name || !username || !email || !password) {
       const error = new Error(
-        "Name, email and password are required"
+        "Name, username, email and password are required"
       );
 
       error.statusCode = 400;
@@ -21,6 +26,7 @@ const register = async (req, res, next) => {
 
     const result = await authService.register({
       name,
+      username,
       email,
       password,
       role,
@@ -39,15 +45,16 @@ const register = async (req, res, next) => {
 /**
  * Login
  * POST /api/auth/login
+ *
+ * Login using username OR email
  */
 const login = async (req, res, next) => {
   try {
-    const { email, password } = req.body;
+    const { identifier, password } = req.body;
 
-    // Basic validation
-    if (!email || !password) {
+    if (!identifier || !password) {
       const error = new Error(
-        "Email and password are required"
+        "Username/email and password are required"
       );
 
       error.statusCode = 400;
@@ -56,7 +63,7 @@ const login = async (req, res, next) => {
     }
 
     const result = await authService.login({
-      email,
+      identifier,
       password,
     });
 

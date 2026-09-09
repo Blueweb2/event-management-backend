@@ -1,11 +1,12 @@
 const express = require("express");
 
 const {
-  setAvailability,
-  getAvailability,
-  getAvailabilityById,
-  deleteAvailability,
-} = require("../controllers/availability.controller");
+  createAssignment,
+  getAssignments,
+  getAssignmentById,
+  updateAssignment,
+  deleteAssignment,
+} = require("../controllers/assignment.controller");
 
 const {
   authenticate,
@@ -17,32 +18,42 @@ const {
 
 const router = express.Router();
 
+/**
+ * Manager/Admin
+ */
 router.post(
   "/",
   authenticate,
   authorize("admin"),
-  setAvailability
+  createAssignment
 );
 
 router.get(
   "/",
   authenticate,
   authorize("admin"),
-  getAvailability
+  getAssignments
 );
 
 router.get(
   "/:id",
   authenticate,
   authorize("admin"),
-  getAvailabilityById
+  getAssignmentById
+);
+
+router.put(
+  "/:id",
+  authenticate,
+  authorize("admin"),
+  updateAssignment
 );
 
 router.delete(
   "/:id",
   authenticate,
   authorize("admin"),
-  deleteAvailability
+  deleteAssignment
 );
 
 module.exports = router;

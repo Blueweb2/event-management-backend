@@ -8,19 +8,40 @@ const { generateToken } = require("../utils/jwt");
  */
 const register = async ({
   name,
+  username,
   email,
   password,
   role = "staff",
 }) => {
-  // Normalize email
-  const normalizedEmail = email.trim().toLowerCase();
+  const normalizedUsername = username
+    .trim()
+    .toLowerCase();
 
-  // Check if user already exists
-  const existingUser = await User.findOne({
+  const normalizedEmail = email
+    .trim()
+    .toLowerCase();
+
+  // Check username
+  const existingUsername = await User.findOne({
+    username: normalizedUsername,
+  });
+
+  if (existingUsername) {
+    const error = new Error(
+      "Username is already taken"
+    );
+
+    error.statusCode = 409;
+
+    throw error;
+  }
+
+  // Check email
+  const existingEmail = await User.findOne({
     email: normalizedEmail,
   });
 
-  if (existingUser) {
+  if (existingEmail) {
     const error = new Error(
       "User with this email already exists"
     );
@@ -39,6 +60,7 @@ const register = async ({
   // Create user
   const user = await User.create({
     name: name.trim(),
+    username: normalizedUsername,
     email: normalizedEmail,
     password: hashedPassword,
     role,
@@ -51,6 +73,7 @@ const register = async ({
     user: {
       id: user._id,
       name: user.name,
+      username: user.username,
       email: user.email,
       role: user.role,
     },
@@ -60,20 +83,37 @@ const register = async ({
 
 /**
  * Login user
+ *
+ * Login can be done using:
+ * - username
+ * - email
  */
-const login = async ({ email, password }) => {
-  // Normalize email
-  const normalizedEmail = email.trim().toLowerCase();
+const login = async ({
+  identifier,
+  password,
+}) => {
+  const normalizedIdentifier = identifier
+    .trim()
+    .toLowerCase();
 
-  // Password has select:false in the model,
-  // so explicitly request it here.
+  // Find by username OR email.
+  //
+  // password has select:false in User model,
+  // so explicitly include it.
   const user = await User.findOne({
-    email: normalizedEmail,
+    $or: [
+      {
+        username: normalizedIdentifier,
+      },
+      {
+        email: normalizedIdentifier,
+      },
+    ],
   }).select("+password");
 
   if (!user) {
     const error = new Error(
-      "Invalid email or password"
+      "Invalid username/email or password"
     );
 
     error.statusCode = 401;
@@ -100,7 +140,7 @@ const login = async ({ email, password }) => {
 
   if (!passwordMatch) {
     const error = new Error(
-      "Invalid email or password"
+      "Invalid username/email or password"
     );
 
     error.statusCode = 401;
@@ -115,6 +155,7 @@ const login = async ({ email, password }) => {
     user: {
       id: user._id,
       name: user.name,
+      username: user.username,
       email: user.email,
       role: user.role,
     },
@@ -139,10 +180,12 @@ const getMe = async (userId) => {
   return {
     id: user._id,
     name: user.name,
+    username: user.username,
     email: user.email,
     phone: user.phone || "",
     location: user.location || "",
-    employmentType: user.employmentType || "full-time",
+    employmentType:
+      user.employmentType || "full-time",
     role: user.role,
     status: user.isActive
       ? "Active"

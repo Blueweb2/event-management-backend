@@ -1,0 +1,153 @@
+const availabilityService = require("../services/availability.service");
+
+/**
+ * Set availability
+ * POST /api/availability
+ */
+const setAvailability = async (
+  req,
+  res,
+  next
+) => {
+  try {
+    const {
+      staff,
+      date,
+      status,
+      startTime,
+      endTime,
+      notes,
+    } = req.body;
+
+    if (!staff || !date || !status) {
+      const error = new Error(
+        "Staff, date and status are required"
+      );
+
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const allowedStatuses = [
+      "AVAILABLE",
+      "ON_LEAVE",
+      "UNAVAILABLE",
+    ];
+
+    if (
+      !allowedStatuses.includes(status)
+    ) {
+      const error = new Error(
+        "Invalid availability status"
+      );
+
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const availability =
+      await availabilityService.setAvailability(
+        {
+          staff,
+          date,
+          status,
+          startTime,
+          endTime,
+          notes,
+          createdBy:
+            req.user.userId,
+        }
+      );
+
+    res.status(200).json({
+      success: true,
+      message:
+        "Staff availability saved successfully",
+      data: {
+        availability,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get availability
+ * GET /api/availability
+ */
+const getAvailability = async (
+  req,
+  res,
+  next
+) => {
+  try {
+    const result =
+      await availabilityService.getAvailability(
+        req.query
+      );
+
+    res.status(200).json({
+      success: true,
+      data: result.availability,
+      pagination: result.pagination,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get availability by ID
+ */
+const getAvailabilityById = async (
+  req,
+  res,
+  next
+) => {
+  try {
+    const availability =
+      await availabilityService.getAvailabilityById(
+        req.params.id
+      );
+
+    res.status(200).json({
+      success: true,
+      data: {
+        availability,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Delete availability
+ */
+const deleteAvailability = async (
+  req,
+  res,
+  next
+) => {
+  try {
+    await availabilityService.deleteAvailability(
+      req.params.id
+    );
+
+    res.status(200).json({
+      success: true,
+      message:
+        "Availability record deleted successfully",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+module.exports = {
+  setAvailability,
+  getAvailability,
+  getAvailabilityById,
+  deleteAvailability,
+};

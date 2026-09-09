@@ -1,11 +1,12 @@
 const express = require("express");
 
 const {
-  setAvailability,
-  getAvailability,
-  getAvailabilityById,
-  deleteAvailability,
-} = require("../controllers/availability.controller");
+  createTask,
+  getTasks,
+  getTaskById,
+  updateTask,
+  deleteTask,
+} = require("../controllers/task.controller");
 
 const {
   authenticate,
@@ -21,28 +22,35 @@ router.post(
   "/",
   authenticate,
   authorize("admin"),
-  setAvailability
+  createTask
 );
 
 router.get(
   "/",
   authenticate,
   authorize("admin"),
-  getAvailability
+  getTasks
 );
 
 router.get(
   "/:id",
   authenticate,
   authorize("admin"),
-  getAvailabilityById
+  getTaskById
+);
+
+router.put(
+  "/:id",
+  authenticate,
+  authorize("admin"),
+  updateTask
 );
 
 router.delete(
   "/:id",
   authenticate,
   authorize("admin"),
-  deleteAvailability
+  deleteTask
 );
 
 module.exports = router;
