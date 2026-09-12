@@ -3,6 +3,7 @@ const {
   getEstimateById,
   getEstimates,
   updateEstimateStatus,
+  convertEstimateToBooking,
 } = require("../services/estimate.service");
 
 // ==========================================
@@ -400,6 +401,42 @@ const updateEstimateStatusController =
   };
 
 // ==========================================
+// CONVERT ESTIMATE TO BOOKING + EVENT
+// POST /api/estimates/:id/convert
+// ==========================================
+
+const convertEstimateToBookingController =
+  async (req, res, next) => {
+    try {
+      const { id } = req.params;
+
+      if (!id) {
+        return res.status(400).json({
+          success: false,
+          message: "Estimate ID is required",
+        });
+      }
+
+      const result = await convertEstimateToBooking(
+        id,
+        req.user?._id || null
+      );
+
+      return res.status(201).json({
+        success: true,
+        message:
+          "Estimate converted to event successfully",
+        data: {
+          booking: result.booking,
+          event: result.event,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+// ==========================================
 // EXPORTS
 // ==========================================
 
@@ -408,4 +445,5 @@ module.exports = {
   getEstimatesController,
   getEstimateByIdController,
   updateEstimateStatusController,
+  convertEstimateToBookingController,
 };

@@ -1,4 +1,6 @@
 const Booking = require("../models/booking.model");
+const Client = require("../models/client.model");
+const Event = require("../models/event.model");
 
 const {
   calculateServicesTotal,
@@ -47,6 +49,46 @@ const createBooking = async ({
   }
 
   // ==========================================
+  // Validate Client Details
+  // ==========================================
+
+  if (!name || !name.trim()) {
+    throw new Error("Client name is required");
+  }
+
+  if (!phone || !phone.trim()) {
+    throw new Error("Client phone is required");
+  }
+
+  if (!email || !email.trim()) {
+    throw new Error("Client email is required");
+  }
+
+  const normalizedName = name.trim();
+  const normalizedPhone = phone.trim();
+  const normalizedEmail = email.trim().toLowerCase();
+
+  // ==========================================
+  // Find or Create Client
+  // ==========================================
+
+  let client = await Client.findOne({
+    $or: [
+      { email: normalizedEmail },
+      { phone: normalizedPhone },
+    ],
+  });
+
+  if (!client) {
+    client = await Client.create({
+      name: normalizedName,
+      phone: normalizedPhone,
+      email: normalizedEmail,
+      createdBy,
+    });
+  }
+
+  // ==========================================
   // Validate Services
   // ==========================================
 
@@ -60,22 +102,34 @@ const createBooking = async ({
   }
 
   // ==========================================
-  // Calculate Service Pricing
+  // Normalize Pricing Values
+  // ==========================================
+
+  const normalizedDiscountValue =
+    Number(discountValue) || 0;
+
+  const normalizedAdditionalCharges =
+    Number(additionalCharges) || 0;
+
+  const normalizedDiscountType =
+    discountType || "percentage";
+
+  // ==========================================
+  // Calculate Services
   // ==========================================
 
   /*
-   * IMPORTANT:
-   *
-   * We NEVER trust unitPrice from the frontend.
+   * NEVER trust pricing information from
+   * the frontend.
    *
    * pricing.service.js:
    *
-   * 1. Fetches the Service from MongoDB
-   * 2. Validates the Service
-   * 3. Validates the selected Option
-   * 4. Gets the Admin-configured price
-   * 5. Determines quantity based on pricingType
-   * 6. Calculates the line-item total
+   * - Fetches Service
+   * - Validates Service
+   * - Validates Option
+   * - Gets configured price
+   * - Calculates quantity
+   * - Creates price snapshot
    */
 
   const pricingResult =
@@ -85,26 +139,22 @@ const createBooking = async ({
     });
 
   // ==========================================
-  // Calculate Final Pricing
+  // Calculate Final Total
   // ==========================================
 
   const totals =
     calculateEstimateTotal({
       subtotal: pricingResult.subtotal,
-      discountType,
-      discountValue,
-      additionalCharges,
+
+      discountType:
+        normalizedDiscountType,
+
+      discountValue:
+        normalizedDiscountValue,
+
+      additionalCharges:
+        normalizedAdditionalCharges,
     });
-
-  // ==========================================
-  // Normalize Discount Values
-  // ==========================================
-
-  const normalizedDiscountValue =
-    Number(discountValue) || 0;
-
-  const normalizedAdditionalCharges =
-    Number(additionalCharges) || 0;
 
   // ==========================================
   // Create Booking
@@ -112,7 +162,13 @@ const createBooking = async ({
 
   const booking = await Booking.create({
     // ========================================
-    // Event Details
+    // Client
+    // ========================================
+
+    client: client._id,
+
+    // ========================================
+    // Event Information
     // ========================================
 
     eventName: eventName.trim(),
@@ -130,37 +186,27 @@ const createBooking = async ({
     description: description.trim(),
 
     // ========================================
-    // Client Details
+    // Booking Message
     // ========================================
-
-    name: name.trim(),
-
-    phone: phone.trim(),
-
-    email: email.trim().toLowerCase(),
 
     message: message?.trim() || "",
 
     // ========================================
-    // Services
+    // Services Snapshot
     // ========================================
 
-    /*
-     * These are the price snapshots returned
-     * by pricing.service.js.
-     *
-     * The frontend's unitPrice is NOT stored.
-     */
-    services: pricingResult.lineItems,
+    services:
+      pricingResult.lineItems,
 
     // ========================================
     // Pricing
     // ========================================
 
-    subtotal: totals.subtotal,
+    subtotal:
+      totals.subtotal,
 
     discountType:
-      discountType || "percentage",
+      normalizedDiscountType,
 
     discountValue:
       normalizedDiscountValue,
@@ -192,6 +238,138 @@ const createBooking = async ({
   return booking;
 };
 
+// ==========================================
+// Confirm Booking
+// ==========================================
+
+const confirmBooking = async (
+  bookingId,
+  confirmedBy = null
+) => {
+  // ==========================================
+  // Find Booking
+  // ==========================================
+
+  const booking = await Booking.findById(bookingId);
+
+  if (!booking) {
+    const error = new Error("Booking not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  // ==========================================
+  // Check Current Status
+  // ==========================================
+
+  if (booking.status === "Confirmed") {
+    const existingEvent = await Event.findOne({
+      booking: booking._id,
+    });
+
+    if (existingEvent) {
+      return {
+        booking,
+        event: existingEvent,
+      };
+    }
+
+    const error = new Error(
+      "Booking is already confirmed but no event exists"
+    );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  if (booking.status !== "Pending") {
+    const error = new Error(
+      `Booking cannot be confirmed because its current status is ${booking.status}`
+    );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // ==========================================
+  // Confirm Booking
+  // ==========================================
+
+  booking.status = "Confirmed";
+
+  await booking.save();
+
+  // ==========================================
+  // Create Event
+  // ==========================================
+
+  const existingEvent = await Event.findOne({
+    booking: booking._id,
+  });
+
+  if (existingEvent) {
+    return {
+      booking,
+      event: existingEvent,
+    };
+  }
+
+  const event = await Event.create({
+    client: booking.client,
+
+    booking: booking._id,
+
+    eventName: booking.eventName,
+
+    eventType: booking.eventType,
+
+    eventDate: booking.eventDate,
+
+    eventTime: booking.eventTime,
+
+    guests: booking.guests,
+
+    location: booking.location,
+
+    description: booking.description,
+
+    status: "Upcoming",
+
+    createdBy: confirmedBy,
+  });
+
+  // ==========================================
+  // Populate Response
+  // ==========================================
+
+  await booking.populate(
+    "client",
+    "name phone email"
+  );
+
+  await event.populate([
+    {
+      path: "client",
+      select: "name phone email",
+    },
+    {
+      path: "booking",
+      select:
+        "eventName eventType eventDate eventTime guests location total status",
+    },
+    {
+      path: "createdBy",
+      select: "name email role",
+    },
+  ]);
+
+  return {
+    booking,
+    event,
+  };
+};
+
 module.exports = {
   createBooking,
+  confirmBooking,
 };

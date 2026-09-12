@@ -5,13 +5,18 @@ const {
   getEstimatesController,
   getEstimateByIdController,
   updateEstimateStatusController,
+  convertEstimateToBookingController,
 } = require("../controllers/estimate.controller");
+
+const { authenticate } = require("../middlewares/auth.middleware");
+const { authorize } = require("../middlewares/role.middleware");
 
 const router = express.Router();
 
 // ==========================================
 // CREATE ESTIMATE
 // POST /api/estimates
+// Public — booking form submits without auth
 // ==========================================
 
 router.post("/", createEstimateController);
@@ -21,7 +26,12 @@ router.post("/", createEstimateController);
 // GET /api/estimates
 // ==========================================
 
-router.get("/", getEstimatesController);
+router.get(
+  "/",
+  authenticate,
+  authorize("Manager"),
+  getEstimatesController
+);
 
 // ==========================================
 // GET SINGLE ESTIMATE
@@ -30,6 +40,8 @@ router.get("/", getEstimatesController);
 
 router.get(
   "/:id",
+  authenticate,
+  authorize("Manager"),
   getEstimateByIdController
 );
 
@@ -40,7 +52,24 @@ router.get(
 
 router.patch(
   "/:id/status",
+  authenticate,
+  authorize("Manager"),
   updateEstimateStatusController
 );
 
-module.exports = router;
+// ==========================================
+// CONVERT ESTIMATE → BOOKING + EVENT
+// POST /api/estimates/:id/convert
+//
+// Takes an ACCEPTED estimate and creates a
+// Confirmed Booking + Upcoming Event in one shot.
+// ==========================================
+
+router.post(
+  "/:id/convert",
+  authenticate,
+  authorize("Manager"),
+  convertEstimateToBookingController
+);
+
+module.exports = router;

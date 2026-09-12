@@ -27,9 +27,9 @@ const createBooking = async (req, res, next) => {
       additionalCharges,
     } = req.body;
 
-    // ========================================
+    // ==========================================
     // Event Validation
-    // ========================================
+    // ==========================================
 
     if (
       !eventName ||
@@ -49,6 +49,25 @@ const createBooking = async (req, res, next) => {
       throw error;
     }
 
+    // ==========================================
+    // Event Date Validation
+    // ==========================================
+
+    const parsedEventDate = new Date(eventDate);
+
+    if (Number.isNaN(parsedEventDate.getTime())) {
+      const error = new Error(
+        "A valid event date is required"
+      );
+
+      error.statusCode = 400;
+      throw error;
+    }
+
+    // ==========================================
+    // Guest Validation
+    // ==========================================
+
     const guestCount = Number(guests);
 
     if (
@@ -63,9 +82,9 @@ const createBooking = async (req, res, next) => {
       throw error;
     }
 
-    // ========================================
+    // ==========================================
     // Client Validation
-    // ========================================
+    // ==========================================
 
     if (!name || !phone || !email) {
       const error = new Error(
@@ -76,9 +95,9 @@ const createBooking = async (req, res, next) => {
       throw error;
     }
 
-    // ========================================
+    // ==========================================
     // Services Validation
-    // ========================================
+    // ==========================================
 
     if (
       !Array.isArray(services) ||
@@ -92,9 +111,9 @@ const createBooking = async (req, res, next) => {
       throw error;
     }
 
-    // ========================================
+    // ==========================================
     // Validate Service Items
-    // ========================================
+    // ==========================================
 
     for (const item of services) {
       if (!item.serviceId) {
@@ -106,13 +125,6 @@ const createBooking = async (req, res, next) => {
         throw error;
       }
 
-      /*
-       * Quantity is required for all variable
-       * pricing types.
-       *
-       * FIXED services will automatically use
-       * quantity = 1 in pricing.service.js.
-       */
       if (
         item.quantity !== undefined &&
         item.quantity !== null
@@ -133,15 +145,75 @@ const createBooking = async (req, res, next) => {
       }
     }
 
-    // ========================================
+    // ==========================================
+    // Validate Discount
+    // ==========================================
+
+    const normalizedDiscountValue =
+      Number(discountValue ?? 0);
+
+    if (
+      !Number.isFinite(normalizedDiscountValue) ||
+      normalizedDiscountValue < 0
+    ) {
+      const error = new Error(
+        "Discount value must be a valid non-negative number"
+      );
+
+      error.statusCode = 400;
+      throw error;
+    }
+
+    // ==========================================
+    // Validate Additional Charges
+    // ==========================================
+
+    const normalizedAdditionalCharges =
+      Number(additionalCharges ?? 0);
+
+    if (
+      !Number.isFinite(
+        normalizedAdditionalCharges
+      ) ||
+      normalizedAdditionalCharges < 0
+    ) {
+      const error = new Error(
+        "Additional charges must be a valid non-negative number"
+      );
+
+      error.statusCode = 400;
+      throw error;
+    }
+
+    // ==========================================
+    // Validate Discount Type
+    // ==========================================
+
+    const normalizedDiscountType =
+      discountType || "percentage";
+
+    if (
+      !["percentage", "fixed"].includes(
+        normalizedDiscountType
+      )
+    ) {
+      const error = new Error(
+        "Discount type must be either percentage or fixed"
+      );
+
+      error.statusCode = 400;
+      throw error;
+    }
+
+    // ==========================================
     // Create Booking
-    // ========================================
+    // ==========================================
 
     const booking =
       await bookingService.createBooking({
         eventName,
         eventType,
-        eventDate,
+        eventDate: parsedEventDate,
         eventTime,
         guests: guestCount,
         location,
@@ -155,26 +227,27 @@ const createBooking = async (req, res, next) => {
         services,
 
         discountType:
-          discountType || "percentage",
+          normalizedDiscountType,
 
         discountValue:
-          discountValue ?? 0,
+          normalizedDiscountValue,
 
         additionalCharges:
-          additionalCharges ?? 0,
+          normalizedAdditionalCharges,
 
         createdBy:
           req.user?._id || null,
       });
 
-    // ========================================
+    // ==========================================
     // Response
-    // ========================================
+    // ==========================================
 
     return res.status(201).json({
       success: true,
       message:
         "Booking request submitted successfully",
+
       data: {
         booking,
       },
@@ -184,6 +257,33 @@ const createBooking = async (req, res, next) => {
   }
 };
 
+// ==========================================
+// Confirm Booking
+// ==========================================
+
+const confirmBooking = async (req, res, next) => {
+  try {
+    const result =
+      await bookingService.confirmBooking(
+        req.params.id,
+        req.user?.userId || null
+      );
+
+    return res.status(200).json({
+      success: true,
+      message:
+        "Booking confirmed and event created successfully",
+      data: {
+        booking: result.booking,
+        event: result.event,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createBooking,
+  confirmBooking,
 };

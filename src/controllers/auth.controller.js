@@ -50,9 +50,10 @@ const register = async (req, res, next) => {
  */
 const login = async (req, res, next) => {
   try {
-    const { identifier, password } = req.body;
+    const { identifier, email, username, password } = req.body;
+    const loginIdentifier = identifier || email || username;
 
-    if (!identifier || !password) {
+    if (!loginIdentifier || !password) {
       const error = new Error(
         "Username/email and password are required"
       );
@@ -63,7 +64,7 @@ const login = async (req, res, next) => {
     }
 
     const result = await authService.login({
-      identifier,
+      identifier: loginIdentifier,
       password,
     });
 

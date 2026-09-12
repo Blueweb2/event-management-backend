@@ -4,6 +4,7 @@ const cors = require("cors");
 const authRoutes = require("./routes/auth.routes");
 const userRoutes = require("./routes/user.routes");
 const eventRoutes = require("./routes/event.routes");
+const clientRoutes = require("./routes/client.routes");
 const serviceRoutes = require("./routes/service.routes");
 const estimateRoutes = require("./routes/estimate.routes");
 const staffRoutes = require("./routes/staff.routes");
@@ -11,13 +12,21 @@ const assignmentRoutes = require("./routes/assignment.routes");
 const taskRoutes = require("./routes/task.routes");
 const availabilityRoutes = require("./routes/availability.routes");
 const attendanceRoutes = require("./routes/attendance.routes");
+const bookingRoutes = require("./routes/booking.routes");
 
 const notFound = require("./middlewares/notFound.middleware");
 const errorHandler = require("./middlewares/error.middleware");
 
 const app = express();
 
-app.use(cors());
+app.use(
+  cors({
+    origin: true,
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
 
 app.use(express.json());
 
@@ -34,7 +43,8 @@ app.use("/api/auth", authRoutes);
 
 app.use("/api/users", userRoutes);
 
-// app.use("/api/events", eventRoutes);
+app.use("/api/events", eventRoutes);
+app.use("/api/clients", clientRoutes);
 
 app.use("/api/services", serviceRoutes);
 
@@ -61,6 +71,15 @@ app.use(
 app.use(
   "/api/attendance",
   attendanceRoutes
+);
+
+app.use(
+  "/api/bookings",
+  bookingRoutes
+);
+app.use(
+  "/api/booking",
+  bookingRoutes
 );
 
 

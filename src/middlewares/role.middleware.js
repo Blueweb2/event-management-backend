@@ -1,4 +1,8 @@
 const authorize = (...allowedRoles) => {
+  const normalizedAllowed = allowedRoles.map((r) =>
+    r.toString().toLowerCase().trim()
+  );
+
   return (req, res, next) => {
     // Authentication middleware should run first
     if (!req.user) {
@@ -8,8 +12,15 @@ const authorize = (...allowedRoles) => {
       });
     }
 
-    // Check user's role
-    if (!allowedRoles.includes(req.user.role)) {
+    const userRole = (req.user.role || "").toString().toLowerCase().trim();
+
+    // Check user's role: direct match or admin/manager interchangeability
+    const isDirectMatch = normalizedAllowed.includes(userRole);
+    const isManagerialMatch =
+      (userRole === "admin" || userRole === "manager") &&
+      (normalizedAllowed.includes("admin") || normalizedAllowed.includes("manager"));
+
+    if (!isDirectMatch && !isManagerialMatch) {
       return res.status(403).json({
         success: false,
         message: "You do not have permission to access this resource",

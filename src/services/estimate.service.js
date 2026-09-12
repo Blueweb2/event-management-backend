@@ -560,6 +560,221 @@ const updateEstimateStatus = async ({
 };
 
 // ==========================================
+// CONVERT ESTIMATE TO BOOKING + EVENT
+// ==========================================
+
+/**
+ * Converts an ACCEPTED estimate into a confirmed
+ * Booking and an Upcoming Event in one atomic step.
+ *
+ * The manager calls this after marking an estimate
+ * as ACCEPTED to create the event in the system.
+ *
+ * Flow:
+ *   Estimate (ACCEPTED)
+ *     → Find/create Client
+ *     → Create Booking (status: Confirmed)
+ *     → Create Event (status: Upcoming)
+ *     → Return { booking, event }
+ */
+
+const convertEstimateToBooking = async (
+  estimateId,
+  convertedBy = null
+) => {
+  if (!estimateId) {
+    const error = new Error("Estimate ID is required");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // ========================================
+  // Find Estimate
+  // ========================================
+
+  const estimate = await Estimate.findById(estimateId);
+
+  if (!estimate) {
+    const error = new Error("Estimate not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  // ========================================
+  // Must Be ACCEPTED
+  // ========================================
+
+  if (estimate.status !== "ACCEPTED") {
+    const error = new Error(
+      `Only ACCEPTED estimates can be converted to events. Current status: ${estimate.status}`
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // ========================================
+  // Require models for booking + event + client
+  // ========================================
+
+  const Booking = require("../models/booking.model");
+  const Event = require("../models/event.model");
+  const Client = require("../models/client.model");
+
+  // ========================================
+  // Find or Create Client
+  // ========================================
+
+  const normalizedEmail = estimate.client.email
+    .trim()
+    .toLowerCase();
+
+  const normalizedPhone = estimate.client.phone.trim();
+
+  let client = await Client.findOne({
+    $or: [
+      { email: normalizedEmail },
+      { phone: normalizedPhone },
+    ],
+  });
+
+  if (!client) {
+    client = await Client.create({
+      name: estimate.client.name.trim(),
+      phone: normalizedPhone,
+      email: normalizedEmail,
+      createdBy: convertedBy,
+    });
+  }
+
+  // ========================================
+  // Check for Duplicate Booking
+  //
+  // Guard against double-clicking the button.
+  // ========================================
+
+  const existingBooking = await Booking.findOne({
+    client: client._id,
+    eventDate: estimate.eventDate,
+    eventName: estimate.eventName,
+  });
+
+  if (existingBooking) {
+    // If a booking exists and already has an event, return both
+    const existingEvent = await Event.findOne({
+      booking: existingBooking._id,
+    })
+      .populate("client", "name phone email")
+      .populate(
+        "booking",
+        "eventName eventType eventDate eventTime guests location total status"
+      );
+
+    return {
+      booking: existingBooking,
+      event: existingEvent,
+    };
+  }
+
+  // ========================================
+  // Build Service Line Items from Estimate
+  //
+  // The estimate already has fully-calculated
+  // price snapshots — no need to re-price.
+  // ========================================
+
+  const serviceLineItems = estimate.items.map((item) => ({
+    serviceId: item.serviceId,
+    optionId: item.optionId ?? null,
+    serviceName: item.serviceName,
+    category: item.category,
+    description: item.description ?? "",
+    quantity: item.quantity,
+    pricingType: item.pricingType,
+    unitLabel: item.unitLabel ?? "",
+    unitPrice: item.unitPrice,
+    total: item.total,
+  }));
+
+  // ========================================
+  // Create Booking (immediately Confirmed)
+  // ========================================
+
+  const booking = await Booking.create({
+    client: client._id,
+
+    eventName: estimate.eventName,
+    eventType: estimate.eventType,
+    eventDate: estimate.eventDate,
+    eventTime: estimate.eventTime,
+    guests: estimate.guests,
+    location: estimate.location,
+    description: estimate.description,
+
+    message: estimate.client.message ?? "",
+
+    services: serviceLineItems,
+
+    subtotal: estimate.subtotal,
+    discountType: estimate.discountType,
+    discountValue: estimate.discountValue,
+    discountAmount: estimate.discount,
+    additionalCharges: estimate.additionalCharges,
+    total: estimate.total,
+    currency: estimate.currency ?? "INR",
+
+    // Confirmed immediately — no manual step needed
+    status: "Confirmed",
+
+    createdBy: convertedBy,
+  });
+
+  // ========================================
+  // Create Event from the Confirmed Booking
+  // ========================================
+
+  const event = await Event.create({
+    client: client._id,
+    booking: booking._id,
+
+    eventName: booking.eventName,
+    eventType: booking.eventType,
+    eventDate: booking.eventDate,
+    eventTime: booking.eventTime,
+    guests: booking.guests,
+    location: booking.location,
+    description: booking.description,
+
+    status: "Upcoming",
+
+    createdBy: convertedBy,
+  });
+
+  // ========================================
+  // Populate & Return
+  // ========================================
+
+  await booking.populate("client", "name phone email");
+
+  await event.populate([
+    {
+      path: "client",
+      select: "name phone email",
+    },
+    {
+      path: "booking",
+      select:
+        "eventName eventType eventDate eventTime guests location total status",
+    },
+    {
+      path: "createdBy",
+      select: "name email role",
+    },
+  ]);
+
+  return { booking, event };
+};
+
+// ==========================================
 // EXPORTS
 // ==========================================
 
@@ -568,4 +783,5 @@ module.exports = {
   getEstimateById,
   getEstimates,
   updateEstimateStatus,
+  convertEstimateToBooking,
 };

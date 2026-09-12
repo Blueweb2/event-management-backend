@@ -17,7 +17,10 @@ const bookingServiceSchema = new mongoose.Schema(
       default: null,
     },
 
-    // Snapshot of the service at booking time
+    // ==========================================
+    // Service Snapshot
+    // ==========================================
+
     serviceName: {
       type: String,
       required: true,
@@ -47,6 +50,7 @@ const bookingServiceSchema = new mongoose.Schema(
     // PER_DAY    → number of days
     // PER_STAFF  → number of staff
     // PER_REEL   → number of reels
+
     quantity: {
       type: Number,
       required: true,
@@ -77,10 +81,9 @@ const bookingServiceSchema = new mongoose.Schema(
     // Price Snapshot
     // ==========================================
 
-    // Price taken from Service/Service Option
+    // Price taken from Service / Service Option
     // at the time of booking.
-    //
-    // NEVER trust this value from frontend.
+
     unitPrice: {
       type: Number,
       required: true,
@@ -105,6 +108,25 @@ const bookingServiceSchema = new mongoose.Schema(
 
 const bookingSchema = new mongoose.Schema(
   {
+    // ==========================================
+    // Client
+    // ==========================================
+
+    // Reference to the actual Client record.
+    //
+    // Booking no longer stores:
+    // name
+    // phone
+    // email
+    //
+    // Those details come from the Client model.
+
+    client: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Client",
+      required: [true, "Client is required"],
+    },
+
     // ==========================================
     // Event Details
     // ==========================================
@@ -156,31 +178,8 @@ const bookingSchema = new mongoose.Schema(
     },
 
     // ==========================================
-    // Client Details
+    // Booking Message
     // ==========================================
-
-    name: {
-      type: String,
-      required: [true, "Customer name is required"],
-      trim: true,
-      minlength: 2,
-      maxlength: 100,
-    },
-
-    phone: {
-      type: String,
-      required: [true, "Customer phone is required"],
-      trim: true,
-      maxlength: 30,
-    },
-
-    email: {
-      type: String,
-      required: [true, "Customer email is required"],
-      lowercase: true,
-      trim: true,
-      maxlength: 150,
-    },
 
     message: {
       type: String,
@@ -289,15 +288,15 @@ const bookingSchema = new mongoose.Schema(
 // ==========================================
 
 bookingSchema.index({
+  client: 1,
+});
+
+bookingSchema.index({
   eventDate: 1,
 });
 
 bookingSchema.index({
   status: 1,
-});
-
-bookingSchema.index({
-  email: 1,
 });
 
 bookingSchema.index({
