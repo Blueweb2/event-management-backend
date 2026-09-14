@@ -103,11 +103,95 @@ const bookingServiceSchema = new mongoose.Schema(
 );
 
 // ==========================================
+// Food Menu Snapshot Schema
+// ==========================================
+
+const foodMenuItemSnapshotSchema = new mongoose.Schema(
+  {
+    foodItemId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "FoodItem",
+      default: null,
+    },
+    name: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    category: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    dietary: {
+      type: String,
+      enum: ["veg", "non-veg", "vegan", "egg"],
+      default: "veg",
+    },
+    rate: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+  },
+  {
+    _id: true,
+  }
+);
+
+const foodMenuSchema = new mongoose.Schema(
+  {
+    included: {
+      type: Boolean,
+      default: false,
+    },
+    servingType: {
+      type: String,
+      enum: ["PER_GUEST", "PER_PLATE", "FIXED"],
+      default: "PER_GUEST",
+    },
+    ratePerGuest: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    totalFoodAmount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    notes: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+    items: {
+      type: [foodMenuItemSnapshotSchema],
+      default: [],
+    },
+  },
+  {
+    _id: false,
+  }
+);
+
+// ==========================================
 // Booking
 // ==========================================
 
 const bookingSchema = new mongoose.Schema(
   {
+    foodMenu: {
+      type: foodMenuSchema,
+      default: () => ({
+        included: false,
+        servingType: "PER_GUEST",
+        ratePerGuest: 0,
+        totalFoodAmount: 0,
+        notes: "",
+        items: [],
+      }),
+    },
     // ==========================================
     // Client
     // ==========================================

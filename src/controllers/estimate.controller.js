@@ -29,6 +29,7 @@ const createEstimateController = async (
       client,
 
       services,
+      foodMenu,
 
       discountType,
       discountValue,
@@ -262,6 +263,7 @@ const createEstimateController = async (
         // ------------------------------------
 
         services,
+        foodMenu,
 
         // ------------------------------------
         // Pricing adjustments

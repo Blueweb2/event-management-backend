@@ -35,6 +35,7 @@ const createEstimate = async ({
   client,
 
   services,
+  foodMenu = null,
 
   discountType = "percentage",
   discountValue = 0,
@@ -205,13 +206,58 @@ const createEstimate = async ({
     });
 
   // ========================================
-  // Calculate estimate totals
+  // Process Food Menu & Catering
   // ========================================
+
+  let foodMenuData = {
+    included: false,
+    servingType: "PER_GUEST",
+    ratePerGuest: 0,
+    totalFoodAmount: 0,
+    notes: "",
+    items: [],
+  };
+
+  if (foodMenu && foodMenu.included) {
+    const ratePerGuest = Number(foodMenu.ratePerGuest || 0);
+    const servingType = foodMenu.servingType || "PER_GUEST";
+    let totalFoodAmount = 0;
+
+    if (servingType === "PER_GUEST" || servingType === "PER_PLATE") {
+      totalFoodAmount = ratePerGuest * guestCount;
+    } else {
+      totalFoodAmount = Number(foodMenu.totalFoodAmount || ratePerGuest || 0);
+    }
+
+    foodMenuData = {
+      included: true,
+      servingType,
+      ratePerGuest,
+      totalFoodAmount: Number(totalFoodAmount.toFixed(2)),
+      notes: foodMenu.notes ? String(foodMenu.notes).trim() : "",
+      items: Array.isArray(foodMenu.items)
+        ? foodMenu.items.map((item) => ({
+            foodItemId: item.foodItemId || null,
+            name: String(item.name || "").trim(),
+            category: String(item.category || "").trim(),
+            dietary: item.dietary || "veg",
+            rate: Number(item.rate || 0),
+          }))
+        : [],
+    };
+  }
+
+  // ========================================
+  // Calculate estimate totals (Services + Food)
+  // ========================================
+
+  const combinedSubtotal =
+    Number((pricingResult.subtotal + foodMenuData.totalFoodAmount).toFixed(2));
 
   const totals =
     calculateEstimateTotal({
       subtotal:
-        pricingResult.subtotal,
+        combinedSubtotal,
 
       discountType,
 
@@ -238,6 +284,12 @@ const createEstimate = async ({
       // ------------------------------------
 
       estimateNumber,
+
+      // ------------------------------------
+      // Food Menu & Catering
+      // ------------------------------------
+
+      foodMenu: foodMenuData,
 
       // ------------------------------------
       // Event details
@@ -713,6 +765,15 @@ const convertEstimateToBooking = async (
     message: estimate.client.message ?? "",
 
     services: serviceLineItems,
+
+    foodMenu: estimate.foodMenu || {
+      included: false,
+      servingType: "PER_GUEST",
+      ratePerGuest: 0,
+      totalFoodAmount: 0,
+      notes: "",
+      items: [],
+    },
 
     subtotal: estimate.subtotal,
     discountType: estimate.discountType,
