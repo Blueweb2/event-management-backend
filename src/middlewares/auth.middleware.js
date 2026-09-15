@@ -4,35 +4,38 @@ const authenticate = (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
 
-    // Check Authorization header
-    if (!authHeader) {
+    if (!authHeader || typeof authHeader !== "string") {
       return res.status(401).json({
         success: false,
         message: "Authorization token is required",
       });
     }
 
-    // Expected format:
-    // Authorization: Bearer <token>
-
-    const parts = authHeader.split(" ");
+    const normalizedHeader = authHeader.trim();
+    const parts = normalizedHeader.split(" ");
 
     if (
       parts.length !== 2 ||
-      parts[0] !== "Bearer"
+      parts[0].toLowerCase() !== "bearer" ||
+      !parts[1] ||
+      parts[1].trim().length === 0
     ) {
       return res.status(401).json({
         success: false,
-        message: "Invalid authorization format",
+        message: "Invalid authorization format. Use: Bearer <token>",
       });
     }
 
-    const token = parts[1];
-
-    // Verify JWT
+    const token = parts[1].trim();
     const decoded = verifyToken(token);
 
-    // Attach authenticated user information
+    if (!decoded || !decoded.userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid token payload",
+      });
+    }
+
     req.user = {
       userId: decoded.userId,
       role: decoded.role,
