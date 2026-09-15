@@ -1,6 +1,7 @@
 const Duty = require("../models/duty.model");
 const User = require("../models/user.model");
 const Booking = require("../models/booking.model");
+const Event = require("../models/event.model");
 
 /**
  * Create a staff assignment / duty
@@ -21,7 +22,16 @@ const createAssignment = async ({
   // CHECK EVENT
   // ==========================================
 
-  const booking = await Booking.findById(event);
+  let booking = await Booking.findById(event);
+
+  // The manager UI works with event records, while Duty.event stores the
+  // source booking. Accept either identifier and persist the booking ID.
+  if (!booking) {
+    const eventRecord = await Event.findById(event).select("booking");
+    booking = eventRecord?.booking
+      ? await Booking.findById(eventRecord.booking)
+      : null;
+  }
 
   if (!booking) {
     const error = new Error("Event not found");
@@ -54,15 +64,29 @@ const createAssignment = async ({
 
   const existingAssignment =
     await Duty.findOne({
-      event,
+      event: booking._id,
       staff,
-      dutyDate,
       status: { $ne: "CANCELLED" },
     });
 
   if (existingAssignment) {
     const error = new Error(
-      "This staff member is already assigned to this event on this date"
+      "This staff member is already assigned to this event"
+    );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const existingDutyOnDate = await Duty.findOne({
+    staff,
+    dutyDate,
+    status: { $ne: "CANCELLED" },
+  });
+
+  if (existingDutyOnDate) {
+    const error = new Error(
+      "This staff member is already assigned to another event on this date"
     );
 
     error.statusCode = 409;
@@ -74,7 +98,7 @@ const createAssignment = async ({
   // ==========================================
 
   const assignment = await Duty.create({
-    event,
+    event: booking._id,
     staff,
     dutyTitle: dutyTitle.trim(),
     role: role?.trim() || "",
@@ -99,6 +123,8 @@ const getAssignments = async ({
   event,
   staff,
   date,
+  startDate,
+  endDate,
   status,
   page = 1,
   limit = 20,
@@ -146,6 +172,36 @@ const getAssignments = async ({
       $gte: start,
       $lt: end,
     };
+  } else if (startDate || endDate) {
+    const range = {};
+
+    if (startDate) {
+      const start = new Date(startDate);
+
+      if (Number.isNaN(start.getTime())) {
+        const error = new Error("Invalid start date");
+        error.statusCode = 400;
+        throw error;
+      }
+
+      start.setHours(0, 0, 0, 0);
+      range.$gte = start;
+    }
+
+    if (endDate) {
+      const end = new Date(endDate);
+
+      if (Number.isNaN(end.getTime())) {
+        const error = new Error("Invalid end date");
+        error.statusCode = 400;
+        throw error;
+      }
+
+      end.setHours(23, 59, 59, 999);
+      range.$lte = end;
+    }
+
+    query.dutyDate = range;
   }
 
   const skip =
