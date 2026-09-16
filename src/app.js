@@ -53,6 +53,7 @@ const apiLimiter = rateLimit({
 
 app.use("/api", apiLimiter);
 app.use(express.json({ limit: "1mb" }));
+app.use("/uploads", express.static(require("path").join(__dirname, "../uploads")));
 
 // Health check
 app.get("/api/health", (req, res) => {

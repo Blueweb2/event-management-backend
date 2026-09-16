@@ -58,6 +58,26 @@ const getFoodItemByIdController = async (req, res) => {
 };
 
 // ==========================================
+// UPLOAD FOOD IMAGE
+// ==========================================
+
+const uploadFoodImageController = async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({
+      success: false,
+      message: "Food image is required",
+    });
+  }
+
+  return res.status(201).json({
+    success: true,
+    data: {
+      imageUrl: `/uploads/food/${req.file.filename}`,
+    },
+  });
+};
+
+// ==========================================
 // CREATE FOOD ITEM
 // ==========================================
 
@@ -125,6 +145,7 @@ const deleteFoodItemController = async (req, res) => {
 module.exports = {
   getFoodItemsController,
   getFoodItemByIdController,
+  uploadFoodImageController,
   createFoodItemController,
   updateFoodItemController,
   deleteFoodItemController,

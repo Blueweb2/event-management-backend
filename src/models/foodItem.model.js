@@ -44,6 +44,12 @@ const foodItemSchema = new mongoose.Schema(
       default: "",
     },
 
+    imageUrl: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
     isPopular: {
       type: Boolean,
       default: false,

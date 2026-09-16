@@ -281,6 +281,7 @@ const createFoodItem = async (data, userId = null) => {
     dietary: data.dietary || "veg",
     defaultRate: rate,
     description: data.description?.trim() || "",
+    imageUrl: data.imageUrl?.trim() || "",
     isPopular: Boolean(data.isPopular),
     active: data.active !== undefined ? Boolean(data.active) : true,
     sortOrder: Number(data.sortOrder) || 0,
@@ -311,6 +312,7 @@ const updateFoodItem = async (id, data) => {
     item.defaultRate = rate;
   }
   if (data.description !== undefined) item.description = data.description.trim();
+  if (data.imageUrl !== undefined) item.imageUrl = data.imageUrl.trim();
   if (data.isPopular !== undefined) item.isPopular = Boolean(data.isPopular);
   if (data.active !== undefined) item.active = Boolean(data.active);
   if (data.sortOrder !== undefined) item.sortOrder = Number(data.sortOrder);
