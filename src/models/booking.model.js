@@ -133,6 +133,16 @@ const foodMenuItemSnapshotSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+    quantity: {
+      type: Number,
+      default: 1,
+      min: 1,
+    },
+    amount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
   },
   {
     _id: true,

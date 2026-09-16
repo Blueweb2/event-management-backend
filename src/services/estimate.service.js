@@ -219,31 +219,33 @@ const createEstimate = async ({
   };
 
   if (foodMenu && foodMenu.included) {
-    const ratePerGuest = Number(foodMenu.ratePerGuest || 0);
-    const servingType = foodMenu.servingType || "PER_GUEST";
-    let totalFoodAmount = 0;
+    const servingType = "FIXED";
+    const items = Array.isArray(foodMenu.items)
+      ? foodMenu.items.map((item) => {
+          const rate = Math.max(0, Number(item.rate || 0));
+          const quantity = Math.max(1, Math.floor(Number(item.quantity || 1)));
+          const amount = Number((rate * quantity).toFixed(2));
 
-    if (servingType === "PER_GUEST" || servingType === "PER_PLATE") {
-      totalFoodAmount = ratePerGuest * guestCount;
-    } else {
-      totalFoodAmount = Number(foodMenu.totalFoodAmount || ratePerGuest || 0);
-    }
-
-    foodMenuData = {
-      included: true,
-      servingType,
-      ratePerGuest,
-      totalFoodAmount: Number(totalFoodAmount.toFixed(2)),
-      notes: foodMenu.notes ? String(foodMenu.notes).trim() : "",
-      items: Array.isArray(foodMenu.items)
-        ? foodMenu.items.map((item) => ({
+          return {
             foodItemId: item.foodItemId || null,
             name: String(item.name || "").trim(),
             category: String(item.category || "").trim(),
             dietary: item.dietary || "veg",
-            rate: Number(item.rate || 0),
-          }))
-        : [],
+            rate,
+            quantity,
+            amount,
+          };
+        })
+      : [];
+    const totalFoodAmount = items.reduce((total, item) => total + item.amount, 0);
+
+    foodMenuData = {
+      included: true,
+      servingType,
+      ratePerGuest: 0,
+      totalFoodAmount: Number(totalFoodAmount.toFixed(2)),
+      notes: foodMenu.notes ? String(foodMenu.notes).trim() : "",
+      items,
     };
   }
 
