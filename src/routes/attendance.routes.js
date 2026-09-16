@@ -23,7 +23,7 @@ const router = express.Router();
 router.post(
   "/check-in",
   authenticate,
-  authorize("admin"),
+  authorize("admin", "Manager", "Staff"),
   checkIn
 );
 
@@ -33,7 +33,7 @@ router.post(
 router.post(
   "/check-out",
   authenticate,
-  authorize("admin"),
+  authorize("admin", "Manager", "Staff"),
   checkOut
 );
 
@@ -43,7 +43,7 @@ router.post(
 router.get(
   "/",
   authenticate,
-  authorize("admin"),
+  authorize("admin", "Manager", "Staff"),
   getAttendance
 );
 
@@ -53,7 +53,7 @@ router.get(
 router.post(
   "/absent",
   authenticate,
-  authorize("admin"),
+  authorize("admin", "Manager"),
   markAbsent
 );
 

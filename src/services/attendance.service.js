@@ -27,18 +27,55 @@ const resolveStatus = (dutyRecord, now) => {
   return now > expected ? "LATE" : "PRESENT";
 };
 
+const assertDutyIsToday = (dutyRecord) => {
+  const today = new Date();
+  const dutyDate = new Date(dutyRecord.dutyDate);
+
+  const isToday =
+    today.getFullYear() === dutyDate.getFullYear() &&
+    today.getMonth() === dutyDate.getMonth() &&
+    today.getDate() === dutyDate.getDate();
+
+  if (!isToday) {
+    const error = new Error("Attendance can only be recorded on the duty date");
+    error.statusCode = 400;
+    throw error;
+  }
+};
+
+const assertDutyHasStarted = (dutyRecord) => {
+  const today = new Date();
+  const dutyDate = new Date(dutyRecord.dutyDate);
+  today.setHours(0, 0, 0, 0);
+  dutyDate.setHours(0, 0, 0, 0);
+
+  if (dutyDate > today) {
+    const error = new Error("A future duty cannot be marked absent");
+    error.statusCode = 400;
+    throw error;
+  }
+};
+
 // ─────────────────────────────────────────────
 // CHECK IN
 // POST /api/attendance/check-in
 // ─────────────────────────────────────────────
 
-const checkIn = async ({ duty, markedBy = null }) => {
+const checkIn = async ({ duty, markedBy = null, staffId = null }) => {
   const dutyRecord = await Duty.findById(duty);
   if (!dutyRecord) {
     const e = new Error("Duty not found");
     e.statusCode = 404;
     throw e;
   }
+
+  if (staffId && String(dutyRecord.staff) !== String(staffId)) {
+    const e = new Error("You can only check in for your assigned duty");
+    e.statusCode = 403;
+    throw e;
+  }
+
+  assertDutyIsToday(dutyRecord);
 
   const existing = await Attendance.findOne({ duty });
   if (existing?.checkIn) {
@@ -73,7 +110,22 @@ const checkIn = async ({ duty, markedBy = null }) => {
 // POST /api/attendance/check-out
 // ─────────────────────────────────────────────
 
-const checkOut = async ({ duty, markedBy = null }) => {
+const checkOut = async ({ duty, markedBy = null, staffId = null }) => {
+  const dutyRecord = await Duty.findById(duty);
+  if (!dutyRecord) {
+    const e = new Error("Duty not found");
+    e.statusCode = 404;
+    throw e;
+  }
+
+  if (staffId && String(dutyRecord.staff) !== String(staffId)) {
+    const e = new Error("You can only check out for your assigned duty");
+    e.statusCode = 403;
+    throw e;
+  }
+
+  assertDutyIsToday(dutyRecord);
+
   const attendance = await Attendance.findOne({ duty });
 
   if (!attendance) {
@@ -112,6 +164,8 @@ const markAbsent = async ({ duty, markedBy = null, notes = "" }) => {
     e.statusCode = 404;
     throw e;
   }
+
+  assertDutyHasStarted(dutyRecord);
 
   const attendance = await Attendance.findOneAndUpdate(
     { duty },

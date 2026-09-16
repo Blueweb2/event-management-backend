@@ -76,9 +76,16 @@ const getAssignments = async (
   next
 ) => {
   try {
+    const filters = { ...req.query };
+    const role = (req.user?.role || "").toLowerCase();
+
+    if (role === "staff") {
+      filters.staff = req.user.userId;
+    }
+
     const result =
       await assignmentService.getAssignments(
-        req.query
+        filters
       );
 
     res.status(200).json({

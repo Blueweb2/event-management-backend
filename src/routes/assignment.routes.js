@@ -31,7 +31,7 @@ router.post(
 router.get(
   "/",
   authenticate,
-  authorize("admin"),
+  authorize("admin", "Manager", "Staff"),
   getAssignments
 );
 

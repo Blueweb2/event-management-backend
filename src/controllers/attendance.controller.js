@@ -26,6 +26,10 @@ const checkIn = async (
         duty,
         markedBy:
           req.user.userId,
+        staffId:
+          (req.user.role || "").toLowerCase() === "staff"
+            ? req.user.userId
+            : null,
       });
 
     res.status(200).json({
@@ -67,6 +71,10 @@ const checkOut = async (
         duty,
         markedBy:
           req.user.userId,
+        staffId:
+          (req.user.role || "").toLowerCase() === "staff"
+            ? req.user.userId
+            : null,
       });
 
     res.status(200).json({
@@ -92,9 +100,14 @@ const getAttendance = async (
   next
 ) => {
   try {
+    const filters = { ...req.query };
+    if ((req.user?.role || "").toLowerCase() === "staff") {
+      filters.staff = req.user.userId;
+    }
+
     const result =
       await attendanceService.getAttendance(
-        req.query
+        filters
       );
 
     res.status(200).json({
