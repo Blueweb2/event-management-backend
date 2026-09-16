@@ -16,6 +16,7 @@ const availabilityRoutes = require("./routes/availability.routes");
 const attendanceRoutes = require("./routes/attendance.routes");
 const bookingRoutes = require("./routes/booking.routes");
 const foodRoutes = require("./routes/food.routes");
+const expenseRoutes = require("./routes/expense.routes");
 
 const notFound = require("./middlewares/notFound.middleware");
 const errorHandler = require("./middlewares/error.middleware");
@@ -104,6 +105,7 @@ app.use(
 );
 
 app.use("/api/food", foodRoutes);
+app.use("/api/expenses", expenseRoutes);
 
 
 // 404 handler

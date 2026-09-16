@@ -3,6 +3,7 @@ const express = require("express");
 const {
   getMyProfile,
   updateMyProfile,
+  changeMyPassword,
 } = require("../controllers/user.controller");
 
 const {
@@ -20,5 +21,6 @@ router.get("/me", authenticate, getMyProfile);
 
 // Update my profile
 router.put("/me", authenticate, updateMyProfile);
+router.patch("/me/password", authenticate, changeMyPassword);
 
 module.exports = router;

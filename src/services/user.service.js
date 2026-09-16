@@ -1,3 +1,4 @@
+const bcrypt = require("bcryptjs");
 const User = require("../models/user.model");
 
 /**
@@ -79,7 +80,42 @@ const updateMyProfile = async (
   };
 };
 
+const changeMyPassword = async (
+  userId,
+  currentPassword,
+  newPassword
+) => {
+  if (!currentPassword || !newPassword) {
+    const error = new Error("Current and new passwords are required");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (newPassword.length < 6) {
+    const error = new Error("New password must be at least 6 characters");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const user = await User.findById(userId).select("+password");
+  if (!user) {
+    const error = new Error("User not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (!(await bcrypt.compare(currentPassword, user.password))) {
+    const error = new Error("Current password is incorrect");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  user.password = await bcrypt.hash(newPassword, 12);
+  await user.save();
+};
+
 module.exports = {
   getMyProfile,
   updateMyProfile,
+  changeMyPassword,
 };
