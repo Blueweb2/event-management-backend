@@ -1,4 +1,4 @@
-﻿const Attendance = require("../models/attendance.model");
+const Attendance = require("../models/attendance.model");
 const Duty = require("../models/duty.model");
 
 // ─────────────────────────────────────────────
@@ -61,7 +61,7 @@ const assertDutyHasStarted = (dutyRecord) => {
 // POST /api/attendance/check-in
 // ─────────────────────────────────────────────
 
-const checkIn = async ({ duty, markedBy = null, staffId = null }) => {
+const checkIn = async ({ duty, markedBy = null, staffId = null, notes = "" }) => {
   const dutyRecord = await Duty.findById(duty);
   if (!dutyRecord) {
     const e = new Error("Duty not found");
@@ -99,6 +99,10 @@ const checkIn = async ({ duty, markedBy = null, staffId = null }) => {
   attendance.checkIn = now;
   attendance.status = status;
   attendance.markedBy = markedBy;
+  
+  if (notes) {
+    attendance.notes = notes;
+  }
 
   await attendance.save();
 
@@ -110,7 +114,7 @@ const checkIn = async ({ duty, markedBy = null, staffId = null }) => {
 // POST /api/attendance/check-out
 // ─────────────────────────────────────────────
 
-const checkOut = async ({ duty, markedBy = null, staffId = null }) => {
+const checkOut = async ({ duty, markedBy = null, staffId = null, notes = "" }) => {
   const dutyRecord = await Duty.findById(duty);
   if (!dutyRecord) {
     const e = new Error("Duty not found");
@@ -146,6 +150,12 @@ const checkOut = async ({ duty, markedBy = null, staffId = null }) => {
 
   attendance.checkOut = new Date();
   attendance.markedBy = markedBy || attendance.markedBy;
+
+  if (notes) {
+    attendance.notes = attendance.notes 
+      ? attendance.notes + "\n" + notes 
+      : notes;
+  }
 
   await attendance.save();
 

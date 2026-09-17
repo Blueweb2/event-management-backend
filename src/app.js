@@ -17,6 +17,7 @@ const attendanceRoutes = require("./routes/attendance.routes");
 const bookingRoutes = require("./routes/booking.routes");
 const foodRoutes = require("./routes/food.routes");
 const expenseRoutes = require("./routes/expense.routes");
+const reportRoutes = require("./routes/report.routes");
 
 const notFound = require("./middlewares/notFound.middleware");
 const errorHandler = require("./middlewares/error.middleware");
@@ -43,7 +44,7 @@ app.use(
 
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 200,
+  max: 2000,
   standardHeaders: true,
   legacyHeaders: false,
   message: {
@@ -106,7 +107,7 @@ app.use(
 
 app.use("/api/food", foodRoutes);
 app.use("/api/expenses", expenseRoutes);
-
+app.use("/api/reports", reportRoutes);
 
 // 404 handler
 app.use(notFound);

@@ -10,7 +10,7 @@ const checkIn = async (
   next
 ) => {
   try {
-    const { duty } = req.body;
+    const { duty, notes } = req.body;
 
     if (!duty) {
       const error = new Error(
@@ -30,6 +30,7 @@ const checkIn = async (
           (req.user.role || "").toLowerCase() === "staff"
             ? req.user.userId
             : null,
+        notes,
       });
 
     res.status(200).json({
@@ -55,7 +56,7 @@ const checkOut = async (
   next
 ) => {
   try {
-    const { duty } = req.body;
+    const { duty, notes } = req.body;
 
     if (!duty) {
       const error = new Error(
@@ -75,6 +76,7 @@ const checkOut = async (
           (req.user.role || "").toLowerCase() === "staff"
             ? req.user.userId
             : null,
+        notes,
       });
 
     res.status(200).json({

@@ -142,7 +142,21 @@ const getAssignments = async ({
   const query = {};
 
   if (event) {
-    query.event = event;
+    try {
+      let booking = await Booking.findById(event);
+      if (!booking) {
+        const eventRecord = await Event.findById(event).select("booking");
+        if (eventRecord && eventRecord.booking) {
+          query.event = eventRecord.booking;
+        } else {
+          query.event = event;
+        }
+      } else {
+        query.event = booking._id;
+      }
+    } catch (err) {
+      query.event = event;
+    }
   }
 
   if (staff) {
