@@ -25,4 +25,20 @@ const toggleExpenseStatus = async (req, res, next) => {
   catch (error) { next(error); }
 };
 
-module.exports = { getExpenses, createExpense, updateExpense, deleteExpense, toggleExpenseStatus };
+const getEventProfitability = async (req, res, next) => {
+  try {
+    const result = await expenseService.getEventProfitability(req.params.eventId);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+};
+
+module.exports = {
+  getExpenses,
+  createExpense,
+  updateExpense,
+  deleteExpense,
+  toggleExpenseStatus,
+  getEventProfitability,
+};

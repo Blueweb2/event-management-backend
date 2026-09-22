@@ -15,6 +15,9 @@ const getMyProfile = async (userId) => {
 
   return {
     id: user._id,
+    username: user.username || "",
+    employeeId: user.employeeId || "",
+    department: user.department || "Event Operations",
     name: user.name,
     email: user.email,
     phone: user.phone || "",
@@ -69,6 +72,9 @@ const updateMyProfile = async (
 
   return {
     id: user._id,
+    username: user.username || "",
+    employeeId: user.employeeId || "",
+    department: user.department || "Event Operations",
     name: user.name,
     email: user.email,
     phone: user.phone || "",

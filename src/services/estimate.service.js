@@ -475,7 +475,7 @@ const getEstimates = async ({
         Number(limit) || 20,
         1,
       ),
-      100,
+      1000,
     );
 
   const skip =

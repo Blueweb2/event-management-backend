@@ -76,7 +76,7 @@ const getAvailability = async ({
 
   const perPage = Math.min(
     Math.max(Number(limit) || 50, 1),
-    100
+    1000
   );
 
   const query = {};

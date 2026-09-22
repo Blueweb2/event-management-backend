@@ -282,7 +282,7 @@ const getAttendance = async ({
   limit = 50,
 } = {}) => {
   const currentPage = Math.max(Number(page) || 1, 1);
-  const perPage = Math.min(Math.max(Number(limit) || 50, 1), 100);
+  const perPage = Math.min(Math.max(Number(limit) || 50, 1), 1000);
 
   const query = {};
 
@@ -571,7 +571,7 @@ const getMyAttendance = async ({
   limit = 20,
 } = {}) => {
   const currentPage = Math.max(Number(page) || 1, 1);
-  const perPage = Math.min(Math.max(Number(limit) || 20, 1), 100);
+  const perPage = Math.min(Math.max(Number(limit) || 20, 1), 1000);
 
   const query = { staff: staffId };
 

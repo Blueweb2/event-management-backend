@@ -236,7 +236,7 @@ const createBooking = async (req, res, next) => {
           normalizedAdditionalCharges,
 
         createdBy:
-          req.user?._id || null,
+          req.user?.userId || null,
       });
 
     // ==========================================

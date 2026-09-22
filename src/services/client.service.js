@@ -56,7 +56,7 @@ const getClients = async ({
   const currentPage = Math.max(Number(page) || 1, 1);
   const perPage = Math.min(
     Math.max(Number(limit) || 20, 1),
-    100
+    1000
   );
 
   const skip = (currentPage - 1) * perPage;

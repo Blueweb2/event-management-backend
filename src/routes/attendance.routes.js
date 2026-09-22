@@ -5,6 +5,8 @@ const {
   checkOut,
   getAttendance,
   markAbsent,
+  updateAttendance,
+  deleteAttendance,
 } = require("../controllers/attendance.controller");
 
 const {
@@ -55,6 +57,26 @@ router.post(
   authenticate,
   authorize("admin", "Manager"),
   markAbsent
+);
+
+/**
+ * Manual attendance update (correction)
+ */
+router.patch(
+  "/:id",
+  authenticate,
+  authorize("admin", "Manager"),
+  updateAttendance
+);
+
+/**
+ * Delete attendance record
+ */
+router.delete(
+  "/:id",
+  authenticate,
+  authorize("admin", "Manager"),
+  deleteAttendance
 );
 
 module.exports = router;

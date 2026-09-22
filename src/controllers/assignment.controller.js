@@ -20,6 +20,7 @@ const createAssignment = async (
       startTime,
       endTime,
       notes,
+      checklist,
     } = req.body;
 
     if (
@@ -49,6 +50,7 @@ const createAssignment = async (
         startTime,
         endTime,
         notes,
+        checklist,
         assignedBy:
           req.user.userId,
       });
@@ -177,10 +179,62 @@ const deleteAssignment = async (
   }
 };
 
+/**
+ * Accept assignment
+ * PATCH /api/assignments/:id/accept
+ */
+const acceptAssignment = async (req, res, next) => {
+  try {
+    const assignment = await assignmentService.acceptAssignment(
+      req.params.id,
+      req.user.userId,
+      req.user.role
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Shift accepted successfully",
+      data: {
+        assignment,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Update assignment sub-task checklist
+ * PATCH /api/assignments/:id/checklist
+ */
+const updateChecklist = async (req, res, next) => {
+  try {
+    const { checklist } = req.body;
+    const assignment = await assignmentService.updateAssignmentChecklist(
+      req.params.id,
+      checklist,
+      req.user.userId,
+      req.user.role
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Checklist updated successfully",
+      data: {
+        assignment,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createAssignment,
   getAssignments,
   getAssignmentById,
   updateAssignment,
   deleteAssignment,
+  acceptAssignment,
+  updateChecklist,
 };

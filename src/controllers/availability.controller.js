@@ -10,7 +10,7 @@ const setAvailability = async (
   next
 ) => {
   try {
-    const {
+    let {
       staff,
       date,
       status,
@@ -18,6 +18,11 @@ const setAvailability = async (
       endTime,
       notes,
     } = req.body;
+
+    // Auto-bind staff ID if logged in user is staff
+    if (!staff && (req.user?.role || "").toLowerCase() === "staff") {
+      staff = req.user.userId;
+    }
 
     if (!staff || !date || !status) {
       const error = new Error(
@@ -82,9 +87,15 @@ const getAvailability = async (
   next
 ) => {
   try {
+    const filters = { ...req.query };
+    // Auto-filter by staff ID if logged in user is staff
+    if ((req.user?.role || "").toLowerCase() === "staff") {
+      filters.staff = req.user.userId;
+    }
+
     const result =
       await availabilityService.getAvailability(
-        req.query
+        filters
       );
 
     res.status(200).json({

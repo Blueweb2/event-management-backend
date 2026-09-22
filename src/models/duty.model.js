@@ -76,6 +76,13 @@ const dutySchema = new mongoose.Schema(
       maxlength: 1000,
     },
 
+    checklist: [
+      {
+        text: { type: String, required: true },
+        completed: { type: Boolean, default: false },
+      },
+    ],
+
     // Manager who assigned this duty
     assignedBy: {
       type: mongoose.Schema.Types.ObjectId,

@@ -147,7 +147,7 @@ const createService = async (req, res, next) => {
           : 0,
 
       createdBy:
-        req.user?._id || null,
+        req.user?.userId || null,
     });
 
     return res.status(201).json({

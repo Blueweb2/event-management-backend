@@ -284,7 +284,7 @@ const createEstimateController = async (
         // ------------------------------------
 
         createdBy:
-          req.user?._id || null,
+          req.user?.userId || null,
       });
 
     // ========================================
@@ -421,7 +421,7 @@ const convertEstimateToBookingController =
 
       const result = await convertEstimateToBooking(
         id,
-        req.user?._id || null
+        req.user?.userId || null
       );
 
       return res.status(201).json({

@@ -20,28 +20,28 @@ const router = express.Router();
 router.post(
   "/",
   authenticate,
-  authorize("admin"),
+  authorize("admin", "Manager", "Staff"),
   setAvailability
 );
 
 router.get(
   "/",
   authenticate,
-  authorize("admin"),
+  authorize("admin", "Manager", "Staff"),
   getAvailability
 );
 
 router.get(
   "/:id",
   authenticate,
-  authorize("admin"),
+  authorize("admin", "Manager", "Staff"),
   getAvailabilityById
 );
 
 router.delete(
   "/:id",
   authenticate,
-  authorize("admin"),
+  authorize("admin", "Manager"),
   deleteAvailability
 );
 

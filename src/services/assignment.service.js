@@ -16,6 +16,7 @@ const createAssignment = async ({
   startTime,
   endTime,
   notes = "",
+  checklist = [],
   assignedBy,
 }) => {
   // ==========================================
@@ -108,6 +109,7 @@ const createAssignment = async ({
     endTime: endTime.trim(),
     status: "ASSIGNED",
     notes: notes?.trim() || "",
+    checklist: Array.isArray(checklist) ? checklist : [],
     assignedBy,
   });
 
@@ -123,6 +125,7 @@ const getAssignments = async ({
   event,
   staff,
   date,
+  dutyDate,
   startDate,
   endDate,
   status,
@@ -136,7 +139,7 @@ const getAssignments = async ({
 
   const perPage = Math.min(
     Math.max(Number(limit) || 20, 1),
-    100
+    1000
   );
 
   const query = {};
@@ -167,8 +170,9 @@ const getAssignments = async ({
     query.status = status;
   }
 
-  if (date) {
-    const start = new Date(date);
+  const queryDate = date || dutyDate;
+  if (queryDate) {
+    const start = new Date(queryDate);
 
     if (Number.isNaN(start.getTime())) {
       const error = new Error(
@@ -308,6 +312,7 @@ const updateAssignment = async (
     endTime,
     status,
     notes,
+    checklist,
   }
 ) => {
   const assignment =
@@ -320,6 +325,10 @@ const updateAssignment = async (
 
     error.statusCode = 404;
     throw error;
+  }
+
+  if (checklist !== undefined) {
+    assignment.checklist = checklist;
   }
 
   // ------------------------------------------
@@ -447,10 +456,79 @@ const deleteAssignment = async (
   return assignment;
 };
 
+/**
+ * Accept an assigned shift (Staff or Manager)
+ */
+const acceptAssignment = async (assignmentId, userId, userRole = "") => {
+  const assignment = await Duty.findById(assignmentId);
+
+  if (!assignment) {
+    const error = new Error("Assignment not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const role = (userRole || "").toLowerCase();
+  const isOwner = assignment.staff?.toString() === userId?.toString();
+  const isManager = role === "admin" || role === "manager";
+
+  if (!isOwner && !isManager) {
+    const error = new Error("You are not authorized to accept this assignment");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  if (assignment.status === "CANCELLED") {
+    const error = new Error("Cannot accept a cancelled assignment");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  assignment.status = "ACCEPTED";
+  await assignment.save();
+
+  return getAssignmentById(assignment._id);
+};
+
+/**
+ * Update assignment sub-task checklist
+ */
+const updateAssignmentChecklist = async (
+  assignmentId,
+  checklist,
+  userId,
+  userRole = ""
+) => {
+  const assignment = await Duty.findById(assignmentId);
+
+  if (!assignment) {
+    const error = new Error("Assignment not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const role = (userRole || "").toLowerCase();
+  const isOwner = assignment.staff?.toString() === userId?.toString();
+  const isManager = role === "admin" || role === "manager";
+
+  if (!isOwner && !isManager) {
+    const error = new Error("You are not authorized to update this checklist");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  assignment.checklist = Array.isArray(checklist) ? checklist : [];
+  await assignment.save();
+
+  return getAssignmentById(assignment._id);
+};
+
 module.exports = {
   createAssignment,
   getAssignments,
   getAssignmentById,
   updateAssignment,
   deleteAssignment,
+  acceptAssignment,
+  updateAssignmentChecklist,
 };

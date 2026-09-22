@@ -59,7 +59,7 @@ const getTasks = async ({
 
   const perPage = Math.min(
     Math.max(Number(limit) || 20, 1),
-    100
+    1000
   );
 
   const query = {};

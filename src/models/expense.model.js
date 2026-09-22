@@ -18,6 +18,7 @@ const expenseSchema = new mongoose.Schema(
     },
     status: { type: String, enum: ["Paid", "Pending"], default: "Pending" },
     description: { type: String, trim: true, default: "", maxlength: 1000 },
+    eventId: { type: mongoose.Schema.Types.ObjectId, ref: "Event", default: null },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
   },
   { timestamps: true }
@@ -25,5 +26,6 @@ const expenseSchema = new mongoose.Schema(
 
 expenseSchema.index({ date: -1 });
 expenseSchema.index({ category: 1, status: 1 });
+expenseSchema.index({ eventId: 1 });
 
 module.exports = mongoose.model("Expense", expenseSchema);

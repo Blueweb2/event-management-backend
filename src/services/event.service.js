@@ -180,7 +180,7 @@ const getEvents = async ({
 
   const perPage = Math.min(
     Math.max(Number(limit) || 20, 1),
-    100
+    1000
   );
 
   const skip =
@@ -195,7 +195,7 @@ const getEvents = async ({
       .populate("client", "name phone email")
       .populate(
         "booking",
-        "eventName eventType eventDate eventTime guests location total status"
+        "eventName eventType eventDate eventTime guests location total status foodMenu services"
       )
       .populate(
         "createdBy",
@@ -236,7 +236,7 @@ const getEventById = async (eventId) => {
     )
     .populate(
       "booking",
-      "eventName eventType eventDate eventTime guests location description services subtotal discountAmount additionalCharges total currency status"
+      "eventName eventType eventDate eventTime guests location description services foodMenu subtotal discountAmount additionalCharges total currency status"
     )
     .populate(
       "createdBy",

@@ -165,9 +165,56 @@ const markAbsent = async (
   }
 };
 
+/**
+ * Update attendance (manual correction)
+ * PATCH /api/attendance/:id
+ */
+const updateAttendance = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const updates = req.body;
+
+    const attendance = await attendanceService.updateAttendance(
+      id,
+      updates,
+      req.user.userId
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Attendance updated successfully",
+      data: {
+        attendance,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Delete attendance
+ * DELETE /api/attendance/:id
+ */
+const deleteAttendance = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    await attendanceService.deleteAttendance(id);
+
+    res.status(200).json({
+      success: true,
+      message: "Attendance record deleted successfully",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   checkIn,
   checkOut,
   getAttendance,
   markAbsent,
+  updateAttendance,
+  deleteAttendance,
 };

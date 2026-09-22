@@ -18,6 +18,7 @@ const bookingRoutes = require("./routes/booking.routes");
 const foodRoutes = require("./routes/food.routes");
 const expenseRoutes = require("./routes/expense.routes");
 const reportRoutes = require("./routes/report.routes");
+const departmentRoutes = require("./routes/department.routes");
 
 const notFound = require("./middlewares/notFound.middleware");
 const errorHandler = require("./middlewares/error.middleware");
@@ -44,7 +45,7 @@ app.use(
 
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 2000,
+  max: 50000,
   standardHeaders: true,
   legacyHeaders: false,
   message: {
@@ -68,18 +69,12 @@ app.get("/api/health", (req, res) => {
 // Routes
 app.use("/api/auth", authRoutes);
 
-app.use("/api/users", userRoutes);
-
-app.use("/api/events", eventRoutes);
-app.use("/api/clients", clientRoutes);
-
-app.use("/api/services", serviceRoutes);
-
-app.use("/api/estimates", estimateRoutes);
 app.use(
   "/api/users/staff",
   staffRoutes
 );
+
+app.use("/api/users", userRoutes);
 app.use(
   "/api/assignments",
   assignmentRoutes
@@ -105,9 +100,14 @@ app.use(
   bookingRoutes
 );
 
+app.use("/api/events", eventRoutes);
+app.use("/api/estimates", estimateRoutes);
+app.use("/api/clients", clientRoutes);
+app.use("/api/services", serviceRoutes);
 app.use("/api/food", foodRoutes);
 app.use("/api/expenses", expenseRoutes);
 app.use("/api/reports", reportRoutes);
+app.use("/api/departments", departmentRoutes);
 
 // 404 handler
 app.use(notFound);
