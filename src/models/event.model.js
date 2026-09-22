@@ -138,8 +138,4 @@ eventSchema.index({
   client: 1,
 });
 
-eventSchema.index({
-  booking: 1,
-});
-
 module.exports = mongoose.model("Event", eventSchema);
