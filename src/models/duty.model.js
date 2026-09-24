@@ -62,11 +62,74 @@ const dutySchema = new mongoose.Schema(
       enum: [
         "ASSIGNED",
         "ACCEPTED",
+        "REJECTED",
         "IN_PROGRESS",
         "COMPLETED",
         "CANCELLED",
       ],
       default: "ASSIGNED",
+    },
+
+    rejectionReason: {
+      type: String,
+      trim: true,
+      default: "",
+      maxlength: 1000,
+    },
+
+    department: {
+      type: String,
+      trim: true,
+      default: "",
+      maxlength: 100,
+    },
+
+    serviceName: {
+      type: String,
+      trim: true,
+      default: "",
+      maxlength: 150,
+    },
+
+    respondedAt: {
+      type: Date,
+      default: null,
+    },
+
+    hourlyRate: {
+      type: Number,
+      default: 0,
+      min: [0, "Salary per hour cannot be negative"],
+    },
+
+    totalHours: {
+      type: Number,
+      default: 0,
+      min: [0, "Total hours cannot be negative"],
+    },
+
+    totalAmount: {
+      type: Number,
+      default: 0,
+      min: [0, "Total amount cannot be negative"],
+    },
+
+    paymentStatus: {
+      type: String,
+      enum: ["PENDING", "PAID", "PROCESSING"],
+      default: "PENDING",
+    },
+
+    paidAt: {
+      type: Date,
+      default: null,
+    },
+
+    paymentReference: {
+      type: String,
+      trim: true,
+      default: "",
+      maxlength: 200,
     },
 
     notes: {

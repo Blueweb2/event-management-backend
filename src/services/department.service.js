@@ -266,7 +266,7 @@ const getEventStaffingRequirements = async (eventId) => {
       recommendedStaffCount: Math.max(Math.ceil((event.guests || 50) / 30), 2),
       allocatedCount: cateringDuties.length,
       assignedDuties: cateringDuties,
-      departmentStaff: cateringStaff.length > 0 ? cateringStaff : enrichedStaffPool,
+      departmentStaff: cateringStaff,
     });
   }
 
@@ -308,7 +308,7 @@ const getEventStaffingRequirements = async (eventId) => {
       recommendedStaffCount: svc.quantity || 1,
       allocatedCount: matchingDuties.length,
       assignedDuties: matchingDuties,
-      departmentStaff: deptStaff.length > 0 ? deptStaff : enrichedStaffPool,
+      departmentStaff: deptStaff,
     });
   });
 
@@ -343,7 +343,7 @@ const getEventStaffingRequirements = async (eventId) => {
     recommendedStaffCount: 2,
     allocatedCount: opsDuties.length,
     assignedDuties: opsDuties,
-    departmentStaff: opsStaff.length > 0 ? opsStaff : enrichedStaffPool,
+    departmentStaff: opsStaff,
   });
 
   // 6. Organization-wide Department Summary for this Date

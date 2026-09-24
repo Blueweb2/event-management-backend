@@ -7,7 +7,9 @@ const {
   updateAssignment,
   deleteAssignment,
   acceptAssignment,
+  rejectAssignment,
   updateChecklist,
+  updatePayment,
 } = require("../controllers/assignment.controller");
 
 const {
@@ -65,6 +67,17 @@ router.patch(
 );
 
 /**
+ * Staff/Manager/Admin: Decline/Reject shift assignment with reason notes
+ * PATCH /api/assignments/:id/reject
+ */
+router.patch(
+  "/:id/reject",
+  authenticate,
+  authorize("admin", "Manager", "Staff"),
+  rejectAssignment
+);
+
+/**
  * Staff/Manager/Admin: Update assignment sub-task checklist
  * PATCH /api/assignments/:id/checklist
  */
@@ -73,6 +86,17 @@ router.patch(
   authenticate,
   authorize("admin", "Manager", "Staff"),
   updateChecklist
+);
+
+/**
+ * Manager/Admin: Update duty payment status / payout record
+ * PATCH /api/assignments/:id/payment
+ */
+router.patch(
+  "/:id/payment",
+  authenticate,
+  authorize("admin", "Manager"),
+  updatePayment
 );
 
 /**

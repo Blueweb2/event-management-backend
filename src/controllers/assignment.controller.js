@@ -15,10 +15,13 @@ const createAssignment = async (
       staff,
       dutyTitle,
       role,
+      department,
+      serviceName,
       description,
       dutyDate,
       startTime,
       endTime,
+      hourlyRate,
       notes,
       checklist,
     } = req.body;
@@ -45,10 +48,13 @@ const createAssignment = async (
         staff,
         dutyTitle,
         role,
+        department,
+        serviceName,
         description,
         dutyDate,
         startTime,
         endTime,
+        hourlyRate,
         notes,
         checklist,
         assignedBy:
@@ -229,6 +235,56 @@ const updateChecklist = async (req, res, next) => {
   }
 };
 
+/**
+ * Reject assignment
+ * PATCH /api/assignments/:id/reject
+ */
+const rejectAssignment = async (req, res, next) => {
+  try {
+    const { reason } = req.body;
+    const assignment = await assignmentService.rejectAssignment(
+      req.params.id,
+      reason,
+      req.user.userId,
+      req.user.role
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Shift declined successfully",
+      data: {
+        assignment,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Update assignment payment status (Manager Only)
+ * PATCH /api/assignments/:id/payment
+ */
+const updatePayment = async (req, res, next) => {
+  try {
+    const { paymentStatus, paymentReference, paidAt } = req.body;
+    const assignment = await assignmentService.updateAssignmentPayment(
+      req.params.id,
+      { paymentStatus, paymentReference, paidAt }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Payment status updated successfully",
+      data: {
+        assignment,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createAssignment,
   getAssignments,
@@ -236,5 +292,7 @@ module.exports = {
   updateAssignment,
   deleteAssignment,
   acceptAssignment,
+  rejectAssignment,
   updateChecklist,
+  updatePayment,
 };

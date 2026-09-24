@@ -2,6 +2,42 @@ const Duty = require("../models/duty.model");
 const User = require("../models/user.model");
 const Booking = require("../models/booking.model");
 const Event = require("../models/event.model");
+const {
+  sendDutyAssignmentNotification,
+  sendDutyResponseNotificationToManager,
+} = require("../utils/notification.util");
+
+/**
+ * Calculates duty duration in decimal hours and total payout amount
+ */
+const computeDutyHoursAndAmount = (startTime = "", endTime = "", hourlyRate = 0) => {
+  if (!startTime || !endTime) {
+    const rate = Math.max(0, Number(hourlyRate) || 0);
+    return { totalHours: 0, totalAmount: 0, hourlyRate: rate };
+  }
+
+  const [startH, startM] = startTime.split(":").map(Number);
+  const [endH, endM] = endTime.split(":").map(Number);
+
+  if (isNaN(startH) || isNaN(endH)) {
+    const rate = Math.max(0, Number(hourlyRate) || 0);
+    return { totalHours: 0, totalAmount: 0, hourlyRate: rate };
+  }
+
+  let startMinutes = startH * 60 + (startM || 0);
+  let endMinutes = endH * 60 + (endM || 0);
+
+  if (endMinutes < startMinutes) {
+    endMinutes += 24 * 60; // Overnight shift
+  }
+
+  const diffMinutes = Math.max(0, endMinutes - startMinutes);
+  const totalHours = Math.round((diffMinutes / 60) * 100) / 100;
+  const rate = Math.max(0, Number(hourlyRate) || 0);
+  const totalAmount = Math.round(totalHours * rate * 100) / 100;
+
+  return { totalHours, totalAmount, hourlyRate: rate };
+};
 
 /**
  * Create a staff assignment / duty
@@ -11,10 +47,13 @@ const createAssignment = async ({
   staff,
   dutyTitle,
   role = "",
+  department = "",
+  serviceName = "",
   description = "",
   dutyDate,
   startTime,
   endTime,
+  hourlyRate = 0,
   notes = "",
   checklist = [],
   assignedBy,
@@ -67,12 +106,12 @@ const createAssignment = async ({
     await Duty.findOne({
       event: booking._id,
       staff,
-      status: { $ne: "CANCELLED" },
+      status: { $nin: ["CANCELLED", "REJECTED"] },
     });
 
   if (existingAssignment) {
     const error = new Error(
-      "This staff member is already assigned to this event"
+      "This staff member is already actively assigned to this event"
     );
 
     error.statusCode = 409;
@@ -82,17 +121,21 @@ const createAssignment = async ({
   const existingDutyOnDate = await Duty.findOne({
     staff,
     dutyDate,
-    status: { $ne: "CANCELLED" },
+    status: { $nin: ["CANCELLED", "REJECTED"] },
   });
 
   if (existingDutyOnDate) {
     const error = new Error(
-      "This staff member is already assigned to another event on this date"
+      "This staff member is already actively assigned to another event on this date"
     );
 
     error.statusCode = 409;
     throw error;
   }
+
+  // Calculate working hours & total salary for this shift
+  const { totalHours, totalAmount, hourlyRate: rate } =
+    computeDutyHoursAndAmount(startTime, endTime, hourlyRate);
 
   // ==========================================
   // CREATE DUTY
@@ -103,15 +146,29 @@ const createAssignment = async ({
     staff,
     dutyTitle: dutyTitle.trim(),
     role: role?.trim() || "",
+    department: department?.trim() || staffMember.department || "",
+    serviceName: serviceName?.trim() || "",
     description: description?.trim() || "",
     dutyDate,
     startTime: startTime.trim(),
     endTime: endTime.trim(),
+    hourlyRate: rate,
+    totalHours,
+    totalAmount,
+    paymentStatus: "PENDING",
     status: "ASSIGNED",
     notes: notes?.trim() || "",
     checklist: Array.isArray(checklist) ? checklist : [],
     assignedBy,
   });
+
+  // Dispatch email & in-app notification to staff
+  sendDutyAssignmentNotification({
+    staff: staffMember,
+    event: booking,
+    duty: assignment,
+    assignedBy,
+  }).catch(() => {});
 
   return getAssignmentById(
     assignment._id
@@ -129,9 +186,10 @@ const getAssignments = async ({
   startDate,
   endDate,
   status,
+  paymentStatus,
   page = 1,
   limit = 20,
-}) => {
+} = {}) => {
   const currentPage = Math.max(
     Number(page) || 1,
     1
@@ -168,6 +226,10 @@ const getAssignments = async ({
 
   if (status) {
     query.status = status;
+  }
+
+  if (paymentStatus) {
+    query.paymentStatus = paymentStatus;
   }
 
   const queryDate = date || dutyDate;
@@ -306,13 +368,20 @@ const updateAssignment = async (
     staff,
     dutyTitle,
     role,
+    department,
+    serviceName,
     description,
     dutyDate,
     startTime,
     endTime,
+    hourlyRate,
     status,
     notes,
     checklist,
+    rejectionReason,
+    paymentStatus,
+    paymentReference,
+    paidAt,
   }
 ) => {
   const assignment =
@@ -353,6 +422,9 @@ const updateAssignment = async (
     }
 
     assignment.staff = staff;
+    if (staffMember.department && !department) {
+      assignment.department = staffMember.department;
+    }
   }
 
   // ------------------------------------------
@@ -360,41 +432,67 @@ const updateAssignment = async (
   // ------------------------------------------
 
   if (dutyTitle !== undefined) {
-    assignment.dutyTitle =
-      dutyTitle.trim();
+    assignment.dutyTitle = dutyTitle.trim();
   }
 
   if (role !== undefined) {
-    assignment.role =
-      role.trim();
+    assignment.role = role.trim();
+  }
+
+  if (department !== undefined) {
+    assignment.department = department.trim();
+  }
+
+  if (serviceName !== undefined) {
+    assignment.serviceName = serviceName.trim();
   }
 
   if (description !== undefined) {
-    assignment.description =
-      description.trim();
+    assignment.description = description.trim();
   }
 
   if (notes !== undefined) {
-    assignment.notes =
-      notes.trim();
+    assignment.notes = notes.trim();
+  }
+
+  if (rejectionReason !== undefined) {
+    assignment.rejectionReason = rejectionReason.trim();
   }
 
   // ------------------------------------------
-  // SCHEDULE
+  // SCHEDULE & SALARY
   // ------------------------------------------
 
   if (dutyDate !== undefined) {
     assignment.dutyDate = dutyDate;
   }
 
+  let scheduleChanged = false;
+
   if (startTime !== undefined) {
-    assignment.startTime =
-      startTime.trim();
+    assignment.startTime = startTime.trim();
+    scheduleChanged = true;
   }
 
   if (endTime !== undefined) {
-    assignment.endTime =
-      endTime.trim();
+    assignment.endTime = endTime.trim();
+    scheduleChanged = true;
+  }
+
+  if (hourlyRate !== undefined) {
+    assignment.hourlyRate = Math.max(0, Number(hourlyRate) || 0);
+    scheduleChanged = true;
+  }
+
+  if (scheduleChanged) {
+    const { totalHours, totalAmount, hourlyRate: rate } = computeDutyHoursAndAmount(
+      assignment.startTime,
+      assignment.endTime,
+      assignment.hourlyRate
+    );
+    assignment.totalHours = totalHours;
+    assignment.totalAmount = totalAmount;
+    assignment.hourlyRate = rate;
   }
 
   // ------------------------------------------
@@ -405,23 +503,45 @@ const updateAssignment = async (
     const allowedStatuses = [
       "ASSIGNED",
       "ACCEPTED",
+      "REJECTED",
       "IN_PROGRESS",
       "COMPLETED",
       "CANCELLED",
     ];
 
-    if (
-      !allowedStatuses.includes(status)
-    ) {
-      const error = new Error(
-        "Invalid assignment status"
-      );
-
+    if (!allowedStatuses.includes(status)) {
+      const error = new Error("Invalid assignment status");
       error.statusCode = 400;
       throw error;
     }
 
     assignment.status = status;
+  }
+
+  // ------------------------------------------
+  // PAYMENT STATUS & REFERENCE
+  // ------------------------------------------
+
+  if (paymentStatus !== undefined) {
+    if (!["PENDING", "PAID", "PROCESSING"].includes(paymentStatus)) {
+      const error = new Error("Invalid payment status");
+      error.statusCode = 400;
+      throw error;
+    }
+    assignment.paymentStatus = paymentStatus;
+    if (paymentStatus === "PAID" && !assignment.paidAt) {
+      assignment.paidAt = paidAt ? new Date(paidAt) : new Date();
+    } else if (paymentStatus === "PENDING") {
+      assignment.paidAt = null;
+    }
+  }
+
+  if (paymentReference !== undefined) {
+    assignment.paymentReference = paymentReference.trim();
+  }
+
+  if (paidAt !== undefined && paidAt) {
+    assignment.paidAt = new Date(paidAt);
   }
 
   await assignment.save();
@@ -458,6 +578,9 @@ const deleteAssignment = async (
 
 /**
  * Accept an assigned shift (Staff or Manager)
+ * Enforces:
+ * 1. Only first-come staff can accept up to the event required staff capacity
+ * 2. If accepted on this event for that day, staff becomes unavailable for other events that day
  */
 const acceptAssignment = async (assignmentId, userId, userRole = "") => {
   const assignment = await Duty.findById(assignmentId);
@@ -484,9 +607,149 @@ const acceptAssignment = async (assignmentId, userId, userRole = "") => {
     throw error;
   }
 
+  // 1. Check if staff already has an ACCEPTED / IN_PROGRESS duty on this date for another event
+  const conflictDuty = await Duty.findOne({
+    _id: { $ne: assignment._id },
+    staff: assignment.staff,
+    dutyDate: assignment.dutyDate,
+    status: { $in: ["ACCEPTED", "IN_PROGRESS", "COMPLETED"] },
+  }).populate("event", "eventName");
+
+  if (conflictDuty) {
+    const otherEventName = conflictDuty.event?.eventName || "another event";
+    const error = new Error(
+      `You are already confirmed on duty for ${otherEventName} on this date. A staff member can only accept duties for one event per day.`
+    );
+    error.statusCode = 409;
+    throw error;
+  }
+
+  // 2. Check Event Staff Capacity / Quota
+  const booking = await Booking.findById(assignment.event);
+  if (booking && booking.requiredStaff && booking.requiredStaff > 0) {
+    const acceptedCount = await Duty.countDocuments({
+      event: assignment.event,
+      status: { $in: ["ACCEPTED", "IN_PROGRESS", "COMPLETED"] },
+    });
+
+    if (acceptedCount >= booking.requiredStaff && assignment.status !== "ACCEPTED") {
+      const error = new Error(
+        `All ${booking.requiredStaff} required staff positions for this event have already been filled by earlier team confirmations.`
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+  }
+
   assignment.status = "ACCEPTED";
+  assignment.respondedAt = new Date();
   await assignment.save();
 
+  const populated = await getAssignmentById(assignment._id);
+
+  // Notify manager that staff has accepted
+  sendDutyResponseNotificationToManager({
+    staff: populated.staff,
+    event: populated.event,
+    duty: populated,
+    status: "ACCEPTED",
+  }).catch(() => {});
+
+  return populated;
+};
+
+/**
+ * Reject an assigned shift with reason notes (Staff or Manager)
+ */
+const rejectAssignment = async (assignmentId, reason, userId, userRole = "") => {
+  const assignment = await Duty.findById(assignmentId);
+
+  if (!assignment) {
+    const error = new Error("Assignment not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const role = (userRole || "").toLowerCase();
+  const isOwner = assignment.staff?.toString() === userId?.toString();
+  const isManager = role === "admin" || role === "manager";
+
+  if (!isOwner && !isManager) {
+    const error = new Error("You are not authorized to decline this assignment");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  if (assignment.status === "CANCELLED" || assignment.status === "COMPLETED") {
+    const error = new Error("Cannot decline an assignment that is cancelled or completed");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const normalizedReason = (reason || "").trim();
+  if (!normalizedReason) {
+    const error = new Error("Please provide a reason for declining this duty");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  assignment.status = "REJECTED";
+  assignment.rejectionReason = normalizedReason;
+  assignment.respondedAt = new Date();
+  await assignment.save();
+
+  const populated = await getAssignmentById(assignment._id);
+
+  // Notify manager that staff has rejected with reason
+  sendDutyResponseNotificationToManager({
+    staff: populated.staff,
+    event: populated.event,
+    duty: populated,
+    status: "REJECTED",
+    reason: normalizedReason,
+  }).catch(() => {});
+
+  return populated;
+};
+
+/**
+ * Update assignment payment status (Manager Only)
+ */
+const updateAssignmentPayment = async (
+  assignmentId,
+  { paymentStatus, paymentReference, paidAt }
+) => {
+  const assignment = await Duty.findById(assignmentId);
+
+  if (!assignment) {
+    const error = new Error("Assignment not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (paymentStatus !== undefined) {
+    if (!["PENDING", "PAID", "PROCESSING"].includes(paymentStatus)) {
+      const error = new Error("Invalid payment status");
+      error.statusCode = 400;
+      throw error;
+    }
+    assignment.paymentStatus = paymentStatus;
+    if (paymentStatus === "PAID" && !assignment.paidAt) {
+      assignment.paidAt = paidAt ? new Date(paidAt) : new Date();
+    } else if (paymentStatus === "PENDING") {
+      assignment.paidAt = null;
+    }
+  }
+
+  if (paymentReference !== undefined) {
+    assignment.paymentReference = paymentReference.trim();
+  }
+
+  if (paidAt !== undefined && paidAt) {
+    assignment.paidAt = new Date(paidAt);
+  }
+
+  await assignment.save();
   return getAssignmentById(assignment._id);
 };
 
@@ -530,5 +793,8 @@ module.exports = {
   updateAssignment,
   deleteAssignment,
   acceptAssignment,
+  rejectAssignment,
+  updateAssignmentPayment,
   updateAssignmentChecklist,
+  computeDutyHoursAndAmount,
 };

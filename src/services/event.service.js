@@ -203,6 +203,7 @@ const getEvents = async ({
       )
       .sort({
         eventDate: 1,
+        createdAt: 1,
       })
       .skip(skip)
       .limit(perPage),
