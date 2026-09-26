@@ -1,4 +1,6 @@
 const Client = require("../models/client.model");
+const Booking = require("../models/booking.model");
+const Event = require("../models/event.model");
 
 // ==========================================
 // Create Client
@@ -102,6 +104,68 @@ const getClientById = async (clientId) => {
 };
 
 // ==========================================
+// Get Client Details with Events & Payment Breakdown
+// ==========================================
+
+const getClientDetailsWithEventsAndPayments = async (clientId) => {
+  const client = await Client.findById(clientId).populate(
+    "createdBy",
+    "name email role"
+  );
+
+  if (!client) {
+    const error = new Error("Client not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  // Fetch Bookings for this client
+  const bookings = await Booking.find({ client: clientId })
+    .sort({ createdAt: -1 })
+    .lean();
+
+  // Fetch Events for this client
+  const events = await Event.find({ client: clientId })
+    .populate("booking")
+    .sort({ eventDate: -1 })
+    .lean();
+
+  // Compute overall client financial summary
+  let totalContractValue = 0;
+  let totalPaidAmount = 0;
+  let totalAdvancePayment = 0;
+
+  bookings.forEach((b) => {
+    totalContractValue += b.total || 0;
+    totalPaidAmount += b.paidAmount || 0;
+    totalAdvancePayment += b.advancePayment || 0;
+  });
+
+  const totalBalanceDue = Math.max(0, Number((totalContractValue - totalPaidAmount).toFixed(2)));
+  let overallPaymentStatus = "UNPAID";
+  if (totalPaidAmount >= totalContractValue && totalContractValue > 0) {
+    overallPaymentStatus = "PAID";
+  } else if (totalPaidAmount > 0) {
+    overallPaymentStatus = "PARTIAL";
+  }
+
+  return {
+    client,
+    bookings,
+    events,
+    financialSummary: {
+      totalBookingsCount: bookings.length,
+      totalEventsCount: events.length,
+      totalContractValue: Number(totalContractValue.toFixed(2)),
+      totalPaidAmount: Number(totalPaidAmount.toFixed(2)),
+      totalAdvancePayment: Number(totalAdvancePayment.toFixed(2)),
+      totalBalanceDue,
+      overallPaymentStatus,
+    },
+  };
+};
+
+// ==========================================
 // Update Client
 // ==========================================
 
@@ -186,6 +250,7 @@ module.exports = {
   createClient,
   getClients,
   getClientById,
+  getClientDetailsWithEventsAndPayments,
   updateClient,
   deactivateClient,
   activateClient,

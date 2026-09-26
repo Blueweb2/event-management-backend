@@ -336,6 +336,9 @@ const createEstimate = async ({
         message:
           client.message?.trim() ||
           "",
+        referralSource:
+          client.referralSource?.trim() ||
+          "",
       },
 
       // ------------------------------------
@@ -696,6 +699,7 @@ const convertEstimateToBooking = async (
       name: estimate.client.name.trim(),
       phone: normalizedPhone,
       email: normalizedEmail,
+      referralSource: estimate.client.referralSource || "",
       createdBy: convertedBy,
     });
   }
@@ -765,6 +769,7 @@ const convertEstimateToBooking = async (
     description: estimate.description,
 
     message: estimate.client.message ?? "",
+    referralSource: estimate.client.referralSource ?? "",
 
     services: serviceLineItems,
 

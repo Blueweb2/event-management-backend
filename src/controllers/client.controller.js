@@ -73,6 +73,26 @@ const getClientById = async (req, res, next) => {
 };
 
 // ==========================================
+// Get Client Details with Events & Payments
+// ==========================================
+
+const getClientDetailsWithEventsAndPayments = async (req, res, next) => {
+  try {
+    const result = await clientService.getClientDetailsWithEventsAndPayments(
+      req.params.id
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Client details and payment history retrieved successfully",
+      data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ==========================================
 // Update Client
 // ==========================================
 
@@ -141,6 +161,7 @@ module.exports = {
   createClient,
   getClients,
   getClientById,
+  getClientDetailsWithEventsAndPayments,
   updateClient,
   deactivateClient,
   activateClient,

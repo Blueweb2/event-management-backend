@@ -3,6 +3,7 @@ const express = require("express");
 const {
   createBooking,
   confirmBooking,
+  recordPayment,
 } = require("../controllers/booking.controller");
 
 const { authenticate } = require("../middlewares/auth.middleware");
@@ -25,21 +26,22 @@ router.post(
 // Confirm Booking
 // ==========================================
 
-// Only Manager can confirm a booking
-//
-// Pending Booking
-//      ↓
-// Confirm
-//      ↓
-// Booking = Confirmed
-//      ↓
-// Event automatically created
-
 router.patch(
   "/:id/confirm",
   authenticate,
   authorize("Manager"),
   confirmBooking
+);
+
+// ==========================================
+// Record Payment / Advance Deposit
+// ==========================================
+
+router.post(
+  "/:id/payments",
+  authenticate,
+  authorize("Manager"),
+  recordPayment
 );
 
 module.exports = router;

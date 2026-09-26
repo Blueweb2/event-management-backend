@@ -356,6 +356,13 @@ const estimateSchema = new mongoose.Schema(
         trim: true,
         maxlength: 1000,
       },
+
+      referralSource: {
+        type: String,
+        default: "",
+        trim: true,
+        maxlength: 200,
+      },
     },
 
     // ========================================

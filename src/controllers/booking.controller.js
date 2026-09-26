@@ -283,7 +283,30 @@ const confirmBooking = async (req, res, next) => {
   }
 };
 
+// ==========================================
+// Record Payment / Advance Deposit
+// ==========================================
+
+const recordPayment = async (req, res, next) => {
+  try {
+    const result = await bookingService.recordPayment(
+      req.params.id,
+      req.body,
+      req.user?.userId || null
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Payment recorded successfully",
+      data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createBooking,
   confirmBooking,
+  recordPayment,
 };

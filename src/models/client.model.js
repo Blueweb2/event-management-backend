@@ -79,6 +79,13 @@ const clientSchema = new mongoose.Schema(
       maxlength: 2000,
     },
 
+    referralSource: {
+      type: String,
+      trim: true,
+      default: "",
+      maxlength: 200,
+    },
+
     // ==========================================
     // Client Status
     // ==========================================

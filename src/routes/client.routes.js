@@ -4,6 +4,7 @@ const {
   createClient,
   getClients,
   getClientById,
+  getClientDetailsWithEventsAndPayments,
   updateClient,
   deactivateClient,
   activateClient,
@@ -40,6 +41,14 @@ router.get(
   authenticate,
   authorize("Manager", "Staff"),
   getClientById
+);
+
+// Get client full details with events and payment summary
+router.get(
+  "/:id/details",
+  authenticate,
+  authorize("Manager", "Staff"),
+  getClientDetailsWithEventsAndPayments
 );
 
 // Update client

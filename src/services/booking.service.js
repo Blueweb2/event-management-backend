@@ -335,6 +335,14 @@ const confirmBooking = async (
 
     status: "Upcoming",
 
+    advancePayment: booking.advancePayment || 0,
+
+    paidAmount: booking.paidAmount || 0,
+
+    paymentStatus: booking.paymentStatus || "UNPAID",
+
+    paymentHistory: booking.paymentHistory || [],
+
     createdBy: confirmedBy,
   });
 
@@ -369,7 +377,77 @@ const confirmBooking = async (
   };
 };
 
+// ==========================================
+// Record Payment / Advance Deposit for Booking & Event
+// ==========================================
+
+const recordPayment = async (bookingId, paymentData, userId = null) => {
+  const {
+    amount,
+    paymentMethod = "Cash",
+    transactionId = "",
+    paymentType = "ADVANCE",
+    notes = "",
+    paymentDate = new Date(),
+  } = paymentData;
+
+  const numericAmount = Number(amount);
+  if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+    const error = new Error("Payment amount must be greater than 0");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const booking = await Booking.findById(bookingId);
+  if (!booking) {
+    const error = new Error("Booking not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const paymentRecord = {
+    amount: numericAmount,
+    paymentDate: paymentDate ? new Date(paymentDate) : new Date(),
+    paymentMethod,
+    transactionId: String(transactionId || "").trim(),
+    paymentType,
+    notes: String(notes || "").trim(),
+    recordedBy: userId,
+  };
+
+  booking.paymentHistory.push(paymentRecord);
+  booking.paidAmount = booking.paymentHistory.reduce((sum, item) => sum + (item.amount || 0), 0);
+
+  if (paymentType === "ADVANCE") {
+    booking.advancePayment = (booking.advancePayment || 0) + numericAmount;
+  }
+
+  const total = booking.total || 0;
+  if (booking.paidAmount >= total && total > 0) {
+    booking.paymentStatus = "PAID";
+  } else if (booking.paidAmount > 0) {
+    booking.paymentStatus = "PARTIAL";
+  } else {
+    booking.paymentStatus = "UNPAID";
+  }
+
+  await booking.save();
+
+  // Sync to associated Event if exists
+  const event = await Event.findOne({ booking: booking._id });
+  if (event) {
+    event.paymentHistory = booking.paymentHistory;
+    event.paidAmount = booking.paidAmount;
+    event.advancePayment = booking.advancePayment;
+    event.paymentStatus = booking.paymentStatus;
+    await event.save();
+  }
+
+  return { booking, event };
+};
+
 module.exports = {
   createBooking,
   confirmBooking,
+  recordPayment,
 };
