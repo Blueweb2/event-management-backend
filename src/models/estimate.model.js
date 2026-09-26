@@ -77,6 +77,7 @@ const estimateItemSchema = new mongoose.Schema(
     pricingType: {
       type: String,
       enum: [
+        "FIXED",
         "PER_GUEST",
         "PER_UNIT",
         "PER_HOUR",

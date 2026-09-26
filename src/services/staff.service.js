@@ -18,35 +18,40 @@ const createStaff = async ({
   emergencyContact = {},
   createdBy = null,
 }) => {
-  const normalizedUsername = username
+  // Normalize and sanitize username (remove @ and invalid regex chars)
+  let normalizedUsername = (username || email || "")
     .trim()
     .toLowerCase();
 
-  const normalizedEmail = email
-    .trim()
-    .toLowerCase();
+  if (normalizedUsername.includes("@")) {
+    normalizedUsername = normalizedUsername.split("@")[0];
+  }
 
-  // ==========================================
-  // CHECK USERNAME
-  // ==========================================
+  normalizedUsername = normalizedUsername.replace(/[^a-z0-9._-]/g, "_");
 
+  if (normalizedUsername.length < 3) {
+    normalizedUsername = (normalizedUsername + "staff").slice(0, 30);
+  } else if (normalizedUsername.length > 30) {
+    normalizedUsername = normalizedUsername.slice(0, 30);
+  }
+
+  // Check if sanitized username is taken; if so, append unique suffix
   const existingUsername = await User.findOne({
     username: normalizedUsername,
   });
 
   if (existingUsername) {
-    const error = new Error(
-      "Username is already taken"
-    );
-
-    error.statusCode = 409;
-
-    throw error;
+    const randomSuffix = Math.floor(100 + Math.random() * 900);
+    normalizedUsername = `${normalizedUsername.slice(0, 26)}_${randomSuffix}`;
   }
 
   // ==========================================
   // CHECK EMAIL
   // ==========================================
+
+  const normalizedEmail = email
+    .trim()
+    .toLowerCase();
 
   const existingEmail = await User.findOne({
     email: normalizedEmail,
