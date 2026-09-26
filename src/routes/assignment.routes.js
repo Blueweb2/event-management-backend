@@ -10,6 +10,9 @@ const {
   rejectAssignment,
   updateChecklist,
   updatePayment,
+  startTask,
+  completeTask,
+  getEventTaskProgress,
 } = require("../controllers/assignment.controller");
 
 const {
@@ -97,6 +100,39 @@ router.patch(
   authenticate,
   authorize("admin", "Manager"),
   updatePayment
+);
+
+/**
+ * Staff: Start task execution
+ * POST /api/assignments/:dutyId/tasks/:taskId/start
+ */
+router.post(
+  "/:dutyId/tasks/:taskId/start",
+  authenticate,
+  authorize("admin", "Manager", "Staff"),
+  startTask
+);
+
+/**
+ * Staff/Manager: Complete task execution
+ * POST /api/assignments/:dutyId/tasks/:taskId/complete
+ */
+router.post(
+  "/:dutyId/tasks/:taskId/complete",
+  authenticate,
+  authorize("admin", "Manager", "Staff"),
+  completeTask
+);
+
+/**
+ * Manager/Staff: Get event task progress stats
+ * GET /api/assignments/event/:eventId/task-progress
+ */
+router.get(
+  "/event/:eventId/task-progress",
+  authenticate,
+  authorize("admin", "Manager", "Staff"),
+  getEventTaskProgress
 );
 
 /**

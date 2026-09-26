@@ -38,6 +38,62 @@ const attendanceSchema = new mongoose.Schema(
       default: null,
     },
 
+    isPaused: {
+      type: Boolean,
+      default: false,
+    },
+
+    pausedAt: {
+      type: Date,
+      default: null,
+    },
+
+    totalPauseMinutes: {
+      type: Number,
+      default: 0,
+    },
+
+    activeMinutes: {
+      type: Number,
+      default: 0,
+    },
+
+    totalHours: {
+      type: Number,
+      default: 0,
+    },
+
+    sessions: [
+      {
+        type: {
+          type: String,
+          enum: ["CLOCK_IN", "PAUSE", "RESUME", "CLOCK_OUT"],
+          required: true,
+        },
+        timestamp: {
+          type: Date,
+          default: Date.now,
+        },
+        reason: {
+          type: String,
+          default: "",
+        },
+        notes: {
+          type: String,
+          default: "",
+        },
+      },
+    ],
+
+    pauseHistory: [
+      {
+        pausedAt: Date,
+        resumedAt: Date,
+        durationMinutes: Number,
+        reason: String,
+      },
+    ],
+
     status: {
       type: String,
       enum: [

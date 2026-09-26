@@ -23,7 +23,22 @@ const sendDutyAssignmentNotification = async ({
           day: "numeric",
         })
       : "Upcoming";
-    const timeFormatted = `${duty?.startTime || "TBD"} - ${duty?.endTime || "TBD"}`;
+    const formatTime12 = (t) => {
+      if (!t) return "TBD";
+      const s = String(t).trim();
+      if (/am|pm/i.test(s)) return s;
+      const parts = s.split(":");
+      if (parts.length < 2) return s;
+      let h = parseInt(parts[0], 10);
+      const m = parseInt(parts[1], 10);
+      if (isNaN(h) || isNaN(m)) return s;
+      const ampm = h >= 12 ? "PM" : "AM";
+      h = h % 12;
+      if (h === 0) h = 12;
+      return `${h < 10 ? "0" + h : h}:${m < 10 ? "0" + m : m} ${ampm}`;
+    };
+
+    const timeFormatted = `${formatTime12(duty?.startTime)} - ${formatTime12(duty?.endTime)}`;
     const location = event?.location || "Event Venue";
 
     console.log("=================================================");

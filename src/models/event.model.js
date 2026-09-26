@@ -124,18 +124,74 @@ const eventSchema = new mongoose.Schema(
     },
 
     // ==========================================
-    // Event Status
+    // Event Status Flow & Audit Fields
     // ==========================================
 
     status: {
       type: String,
       enum: [
+        "CONFIRMED",
+        "READY_TO_START",
+        "IN_PROGRESS",
+        "COMPLETED",
+        "CANCELLED",
         "Upcoming",
         "Ongoing",
         "Completed",
         "Cancelled",
+        "Invoiced",
+        "Settled",
       ],
-      default: "Upcoming",
+      default: "CONFIRMED",
+    },
+
+    startedAt: {
+      type: Date,
+      default: null,
+    },
+
+    startedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+
+    completedAt: {
+      type: Date,
+      default: null,
+    },
+
+    completedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+
+    invoicedAt: {
+      type: Date,
+      default: null,
+    },
+
+    invoicedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+
+    activities: {
+      type: [
+        {
+          action: { type: String, required: true },
+          description: { type: String, required: true },
+          timestamp: { type: Date, default: Date.now },
+          performedBy: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "User",
+            default: null,
+          },
+        },
+      ],
+      default: [],
     },
 
     // ==========================================

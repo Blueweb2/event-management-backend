@@ -242,6 +242,10 @@ const getEventById = async (eventId) => {
     .populate(
       "createdBy",
       "name email role"
+    )
+    .populate(
+      "startedBy",
+      "name email role"
     );
 
   if (!event) {
@@ -323,41 +327,100 @@ const updateEvent = async (
 
 const updateEventStatus = async (
   eventId,
-  status
+  status,
+  userId = null
 ) => {
   const allowedStatuses = [
+    "CONFIRMED",
+    "READY_TO_START",
+    "IN_PROGRESS",
+    "COMPLETED",
+    "CANCELLED",
     "Upcoming",
     "Ongoing",
     "Completed",
     "Cancelled",
+    "Invoiced",
+    "Settled",
   ];
 
   if (!allowedStatuses.includes(status)) {
-    const error = new Error(
-      "Invalid event status"
-    );
-
+    const error = new Error("Invalid event status");
     error.statusCode = 400;
     throw error;
   }
 
-  const event =
-    await Event.findByIdAndUpdate(
-      eventId,
-      { status },
-      {
-        new: true,
-        runValidators: true,
-      }
-    )
-      .populate(
-        "client",
-        "name phone email"
-      )
-      .populate(
-        "booking",
-        "eventName eventType eventDate eventTime guests location total status"
-      );
+  const existingEvent = await Event.findById(eventId);
+  if (!existingEvent) {
+    const error = new Error("Event not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const User = require("../models/user.model");
+  let actorName = "Manager";
+  if (userId) {
+    const u = await User.findById(userId).select("name");
+    if (u?.name) actorName = u.name;
+  }
+
+  const updateFields = { status };
+  const now = new Date();
+
+  if (["Completed", "COMPLETED"].includes(status)) {
+    if (!existingEvent.completedAt) {
+      updateFields.completedAt = now;
+      updateFields.completedBy = userId || null;
+    }
+  }
+
+  if (["Invoiced", "Settled"].includes(status)) {
+    if (!existingEvent.invoicedAt) {
+      updateFields.invoicedAt = now;
+      updateFields.invoicedBy = userId || null;
+    }
+  }
+
+  const event = await Event.findByIdAndUpdate(
+    eventId,
+    { $set: updateFields },
+    { new: true, runValidators: true }
+  )
+    .populate("client", "name phone email")
+    .populate("booking", "eventName eventType eventDate eventTime guests location total status")
+    .populate("startedBy", "name email")
+    .populate("completedBy", "name email")
+    .populate("invoicedBy", "name email");
+
+  if (event) {
+    if (!Array.isArray(event.activities)) event.activities = [];
+    const actionDesc =
+      ["Completed", "COMPLETED"].includes(status)
+        ? `Event marked as Completed by ${actorName}`
+        : ["Invoiced", "Settled"].includes(status)
+        ? `Event invoice generated and settled by ${actorName}`
+        : `Event status updated to ${status} by ${actorName}`;
+
+    event.activities.push({
+      action: `STATUS_CHANGED_${status.toUpperCase()}`,
+      description: actionDesc,
+      timestamp: now,
+      performedBy: userId || null,
+    });
+    await event.save();
+  }
+
+  return event;
+};
+
+// ==========================================
+// Start Event (Manager Action)
+// PATCH /api/events/:id/start
+// ==========================================
+
+const startEvent = async (eventId, managerId) => {
+  const User = require("../models/user.model");
+  const event = await Event.findById(eventId);
 
   if (!event) {
     const error = new Error("Event not found");
@@ -365,7 +428,66 @@ const updateEventStatus = async (
     throw error;
   }
 
-  return event;
+  // Verify event is not already started
+  if (
+    event.status === "IN_PROGRESS" ||
+    event.status === "Ongoing" ||
+    event.status === "COMPLETED" ||
+    event.status === "Completed"
+  ) {
+    const error = new Error("This event has already been started or completed.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // Date validation: Current Date must match or be on Event Date
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0, 10);
+  const eventDateObj = new Date(event.eventDate);
+  const eventDateStr = eventDateObj.toISOString().slice(0, 10);
+
+  if (todayStr < eventDateStr) {
+    const formattedDate = eventDateObj.toLocaleDateString("en-US", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    });
+    const error = new Error(`This event can only be started on ${formattedDate}.`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // Find manager details for activity log
+  let managerName = "Manager";
+  if (managerId) {
+    const managerUser = await User.findById(managerId).select("name");
+    if (managerUser?.name) managerName = managerUser.name;
+  }
+
+  // Transition status to IN_PROGRESS & save timestamps
+  event.status = "IN_PROGRESS";
+  event.startedAt = now;
+  event.startedBy = managerId || null;
+
+  if (!Array.isArray(event.activities)) {
+    event.activities = [];
+  }
+
+  event.activities.push({
+    action: "EVENT_STARTED",
+    description: `Event started by ${managerName}`,
+    timestamp: now,
+    performedBy: managerId || null,
+  });
+
+  await event.save();
+
+  // Also keep associated booking in sync
+  if (event.booking) {
+    await Booking.findByIdAndUpdate(event.booking, { status: "Confirmed" });
+  }
+
+  return getEventById(event._id);
 };
 
 // ==========================================
@@ -375,7 +497,7 @@ const updateEventStatus = async (
 const cancelEvent = async (eventId) => {
   return updateEventStatus(
     eventId,
-    "Cancelled"
+    "CANCELLED"
   );
 };
 
@@ -389,5 +511,6 @@ module.exports = {
   getEventById,
   updateEvent,
   updateEventStatus,
+  startEvent,
   cancelEvent,
 };

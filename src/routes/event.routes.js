@@ -6,6 +6,8 @@ const {
   getEventById,
   updateEvent,
   updateEventStatus,
+  startEvent,
+  getActivityTimeline,
   cancelEvent,
 } = require("../controllers/event.controller");
 
@@ -42,6 +44,14 @@ router.get(
   getEventById
 );
 
+// Get event activity operational timeline
+router.get(
+  "/:id/activity-timeline",
+  authenticate,
+  authorize("Manager", "Staff"),
+  getActivityTimeline
+);
+
 // Update event details
 router.put(
   "/:id",
@@ -56,6 +66,14 @@ router.patch(
   authenticate,
   authorize("Manager"),
   updateEventStatus
+);
+
+// Start event (Manager action on event date)
+router.patch(
+  "/:id/start",
+  authenticate,
+  authorize("Manager"),
+  startEvent
 );
 
 // Cancel event

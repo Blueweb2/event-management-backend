@@ -146,6 +146,35 @@ const dutySchema = new mongoose.Schema(
       },
     ],
 
+    tasks: [
+      {
+        title: { type: String, required: true, trim: true },
+        description: { type: String, trim: true, default: "" },
+        plannedStartAt: { type: Date, default: null },
+        plannedEndAt: { type: Date, default: null },
+        actualStartAt: { type: Date, default: null },
+        actualEndAt: { type: Date, default: null },
+        status: {
+          type: String,
+          enum: ["PENDING", "IN_PROGRESS", "COMPLETED", "OVERDUE", "SKIPPED"],
+          default: "PENDING",
+        },
+        completionNotes: { type: String, trim: true, default: "" },
+        startedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          default: null,
+        },
+        completedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          default: null,
+        },
+        wasOverdue: { type: Boolean, default: false },
+        delayMinutes: { type: Number, default: 0 },
+      },
+    ],
+
     // Manager who assigned this duty
     assignedBy: {
       type: mongoose.Schema.Types.ObjectId,

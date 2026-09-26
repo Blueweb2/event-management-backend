@@ -3,10 +3,13 @@ const express = require("express");
 const {
   checkIn,
   checkOut,
+  pauseShift,
+  resumeShift,
   getAttendance,
   markAbsent,
   updateAttendance,
   deleteAttendance,
+  getEventStaffAttendance,
 } = require("../controllers/attendance.controller");
 
 const {
@@ -30,6 +33,26 @@ router.post(
 );
 
 /**
+ * Pause shift
+ */
+router.post(
+  "/pause",
+  authenticate,
+  authorize("admin", "Manager", "Staff"),
+  pauseShift
+);
+
+/**
+ * Resume shift
+ */
+router.post(
+  "/resume",
+  authenticate,
+  authorize("admin", "Manager", "Staff"),
+  resumeShift
+);
+
+/**
  * Check out
  */
 router.post(
@@ -47,6 +70,17 @@ router.get(
   authenticate,
   authorize("admin", "Manager", "Staff"),
   getAttendance
+);
+
+/**
+ * Event staff attendance timeline & stats
+ * GET /api/attendance/event/:eventId
+ */
+router.get(
+  "/event/:eventId",
+  authenticate,
+  authorize("admin", "Manager", "Staff"),
+  getEventStaffAttendance
 );
 
 /**

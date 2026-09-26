@@ -93,6 +93,63 @@ const checkOut = async (
 };
 
 /**
+ * Pause Shift
+ * POST /api/attendance/pause
+ */
+const pauseShift = async (req, res, next) => {
+  try {
+    const { duty, reason, notes } = req.body;
+    if (!duty) {
+      const error = new Error("Duty is required");
+      error.statusCode = 400;
+      throw error;
+    }
+    const attendance = await attendanceService.pauseShift({
+      duty,
+      markedBy: req.user.userId,
+      staffId: (req.user.role || "").toLowerCase() === "staff" ? req.user.userId : null,
+      reason: reason || "Break",
+      notes,
+    });
+    res.status(200).json({
+      success: true,
+      message: "Shift paused successfully",
+      data: { attendance },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Resume Shift
+ * POST /api/attendance/resume
+ */
+const resumeShift = async (req, res, next) => {
+  try {
+    const { duty, notes } = req.body;
+    if (!duty) {
+      const error = new Error("Duty is required");
+      error.statusCode = 400;
+      throw error;
+    }
+    const attendance = await attendanceService.resumeShift({
+      duty,
+      markedBy: req.user.userId,
+      staffId: (req.user.role || "").toLowerCase() === "staff" ? req.user.userId : null,
+      notes,
+    });
+    res.status(200).json({
+      success: true,
+      message: "Shift resumed successfully",
+      data: { attendance },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * Get attendance
  * GET /api/attendance
  */
@@ -210,11 +267,33 @@ const deleteAttendance = async (req, res, next) => {
   }
 };
 
+/**
+ * Get Event Staff Attendance Timeline & Stats
+ * GET /api/attendance/event/:eventId
+ */
+const getEventStaffAttendance = async (req, res, next) => {
+  try {
+    const { eventId } = req.params;
+    const staffList = await attendanceService.getEventStaffAttendance(eventId);
+
+    res.status(200).json({
+      success: true,
+      message: "Event staff attendance retrieved successfully",
+      data: staffList,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   checkIn,
   checkOut,
+  pauseShift,
+  resumeShift,
   getAttendance,
   markAbsent,
   updateAttendance,
   deleteAttendance,
+  getEventStaffAttendance,
 };

@@ -123,7 +123,8 @@ const updateEventStatus = async (req, res, next) => {
 
     const event = await eventService.updateEventStatus(
       req.params.id,
-      status
+      status,
+      req.user?.id
     );
 
     return res.status(200).json({
@@ -157,6 +158,47 @@ const cancelEvent = async (req, res, next) => {
 };
 
 // ==========================================
+// Start Event
+// ==========================================
+
+const startEvent = async (req, res, next) => {
+  try {
+    const event = await eventService.startEvent(
+      req.params.id,
+      req.user?.userId
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Event started successfully",
+      data: event,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ==========================================
+// Get Event Operational Activity Timeline
+// ==========================================
+
+const getActivityTimeline = async (req, res, next) => {
+  try {
+    const event = await eventService.getEventById(req.params.id);
+    return res.status(200).json({
+      success: true,
+      data: {
+        eventId: event._id,
+        eventName: event.eventName,
+        activities: event.activities || [],
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ==========================================
 // Export
 // ==========================================
 
@@ -166,5 +208,7 @@ module.exports = {
   getEventById,
   updateEvent,
   updateEventStatus,
+  startEvent,
+  getActivityTimeline,
   cancelEvent,
 };

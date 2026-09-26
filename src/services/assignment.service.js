@@ -313,6 +313,33 @@ const getAssignments = async ({
       Duty.countDocuments(query),
     ]);
 
+  // Enrich populated event object with live Event status and startedAt
+  const bookingIds = assignments
+    .map((a) => a.event?._id)
+    .filter(Boolean);
+
+  if (bookingIds.length > 0) {
+    const events = await Event.find({
+      $or: [{ booking: { $in: bookingIds } }, { _id: { $in: bookingIds } }],
+    }).select("booking status startedAt startedBy").lean();
+
+    const eventMap = new Map();
+    events.forEach((evt) => {
+      if (evt.booking) eventMap.set(String(evt.booking), evt);
+      eventMap.set(String(evt._id), evt);
+    });
+
+    assignments.forEach((a) => {
+      if (a.event && typeof a.event === "object") {
+        const matchingEvt = eventMap.get(String(a.event._id));
+        if (matchingEvt) {
+          a.event.status = matchingEvt.status;
+          a.event.startedAt = matchingEvt.startedAt;
+        }
+      }
+    });
+  }
+
   return {
     assignments,
     pagination: {
@@ -354,6 +381,17 @@ const getAssignmentById = async (
 
     error.statusCode = 404;
     throw error;
+  }
+
+  if (assignment.event) {
+    const matchingEvt = await Event.findOne({
+      $or: [{ booking: assignment.event._id }, { _id: assignment.event._id }],
+    }).select("status startedAt").lean();
+
+    if (matchingEvt) {
+      assignment.event.status = matchingEvt.status;
+      assignment.event.startedAt = matchingEvt.startedAt;
+    }
   }
 
   return assignment;
@@ -786,6 +824,277 @@ const updateAssignmentChecklist = async (
   return getAssignmentById(assignment._id);
 };
 
+/**
+ * Start a task / subtask execution (Staff Action)
+ * Rules: Event IN_PROGRESS, Staff assigned & CLOCKED_IN & ACTIVE (not paused), Task not completed
+ */
+const startTask = async (dutyId, taskId, staffId) => {
+  const Attendance = require("../models/attendance.model");
+  const Event = require("../models/event.model");
+  const User = require("../models/user.model");
+
+  const duty = await Duty.findById(dutyId);
+  if (!duty) {
+    const error = new Error("Duty assignment not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (String(duty.staff) !== String(staffId)) {
+    const error = new Error("You can only start tasks for your own assigned duty");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  // 1. Verify Event is IN_PROGRESS
+  const eventRecord = await Event.findOne({
+    $or: [{ _id: duty.event }, { booking: duty.event }],
+  });
+
+  if (!eventRecord || !["IN_PROGRESS", "Ongoing"].includes(eventRecord.status) || !eventRecord.startedAt) {
+    const error = new Error("Event has not been started by manager yet");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // 2. Verify Staff Attendance: must be CLOCKED_IN and NOT PAUSED
+  const attendance = await Attendance.findOne({ duty: duty._id });
+  if (!attendance || !attendance.checkIn || attendance.checkOut) {
+    const error = new Error("You must clock in before starting a task");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (attendance.isPaused) {
+    const error = new Error("Cannot start a task while shift is paused. Please resume your shift first.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // 3. Find target task in duty.tasks or duty.checklist
+  let task = duty.tasks?.id(taskId);
+  let taskTitle = "";
+
+  const now = new Date();
+
+  if (task) {
+    if (task.status === "COMPLETED") {
+      const error = new Error("This task has already been completed");
+      error.statusCode = 400;
+      throw error;
+    }
+    task.status = "IN_PROGRESS";
+    task.actualStartAt = now;
+    task.startedBy = staffId;
+    taskTitle = task.title;
+  } else if (duty.checklist?.id(taskId)) {
+    const item = duty.checklist.id(taskId);
+    taskTitle = item.text;
+  } else {
+    const error = new Error("Task not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  await duty.save();
+
+  // Log Event Audit Activity
+  const staffUser = await User.findById(staffId).select("name");
+  const staffName = staffUser?.name || "Staff";
+  if (!Array.isArray(eventRecord.activities)) eventRecord.activities = [];
+  eventRecord.activities.push({
+    action: "TASK_STARTED",
+    description: `${staffName} started task "${taskTitle}"`,
+    timestamp: now,
+    performedBy: staffId,
+  });
+  await eventRecord.save();
+
+  return getAssignmentById(duty._id);
+};
+
+/**
+ * Complete a task / subtask execution (Staff / Manager Action)
+ */
+const completeTask = async (dutyId, taskId, staffId, userRole = "", completionNotes = "") => {
+  const Attendance = require("../models/attendance.model");
+  const Event = require("../models/event.model");
+  const User = require("../models/user.model");
+
+  const duty = await Duty.findById(dutyId);
+  if (!duty) {
+    const error = new Error("Duty assignment not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const role = (userRole || "").toLowerCase();
+  const isOwner = String(duty.staff) === String(staffId);
+  const isManager = role === "admin" || role === "manager";
+
+  if (!isOwner && !isManager) {
+    const error = new Error("You are not authorized to complete this task");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const now = new Date();
+  let taskTitle = "";
+  let wasOverdue = false;
+  let delayMinutes = 0;
+
+  let task = duty.tasks?.id(taskId);
+
+  if (task) {
+    if (task.status === "COMPLETED") {
+      const error = new Error("This task has already been completed");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    if (task.plannedEndAt && now > new Date(task.plannedEndAt)) {
+      wasOverdue = true;
+      delayMinutes = Math.max(0, Math.round((now.getTime() - new Date(task.plannedEndAt).getTime()) / 60000));
+    }
+
+    task.status = "COMPLETED";
+    task.actualEndAt = now;
+    task.completedBy = staffId;
+    task.completionNotes = completionNotes || "";
+    task.wasOverdue = wasOverdue;
+    task.delayMinutes = delayMinutes;
+    taskTitle = task.title;
+
+    // Sync checklist if matching text exists
+    if (duty.checklist?.length) {
+      const item = duty.checklist.find((c) => c.text === task.title);
+      if (item) item.completed = true;
+    }
+  } else if (duty.checklist?.id(taskId)) {
+    const item = duty.checklist.id(taskId);
+    item.completed = true;
+    taskTitle = item.text;
+  } else {
+    const error = new Error("Task not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  await duty.save();
+
+  // Log Event Audit Activity
+  const staffUser = await User.findById(staffId).select("name");
+  const staffName = staffUser?.name || "Staff";
+  const eventRecord = await Event.findOne({
+    $or: [{ _id: duty.event }, { booking: duty.event }],
+  });
+
+  if (eventRecord) {
+    if (!Array.isArray(eventRecord.activities)) eventRecord.activities = [];
+    const delayMsg = wasOverdue ? ` (Completed ${delayMinutes}m late)` : "";
+    eventRecord.activities.push({
+      action: "TASK_COMPLETED",
+      description: `${staffName} completed task "${taskTitle}"${delayMsg}`,
+      timestamp: now,
+      performedBy: staffId,
+    });
+    await eventRecord.save();
+  }
+
+  return getAssignmentById(duty._id);
+};
+
+/**
+ * Get Event Task Progress Stats & Roster (Manager Action)
+ */
+const getEventTaskProgress = async (eventId) => {
+  const Event = require("../models/event.model");
+
+  const eventRecord = await Event.findOne({
+    $or: [{ _id: eventId }, { booking: eventId }],
+  });
+
+  const searchBookingId = eventRecord ? eventRecord.booking : eventId;
+
+  const duties = await Duty.find({ event: searchBookingId })
+    .populate("staff", "name username employeeId department")
+    .lean();
+
+  const allTasks = [];
+  const now = new Date();
+
+  duties.forEach((d) => {
+    if (Array.isArray(d.tasks) && d.tasks.length > 0) {
+      d.tasks.forEach((t) => {
+        let isOverdue = false;
+        let delayMinutes = t.delayMinutes || 0;
+
+        if (t.status !== "COMPLETED" && t.plannedEndAt && now > new Date(t.plannedEndAt)) {
+          isOverdue = true;
+          delayMinutes = Math.max(0, Math.round((now.getTime() - new Date(t.plannedEndAt).getTime()) / 60000));
+        }
+
+        allTasks.push({
+          taskId: t._id,
+          dutyId: d._id,
+          dutyTitle: d.dutyTitle,
+          assignedStaff: d.staff,
+          title: t.title,
+          description: t.description || "",
+          plannedStartAt: t.plannedStartAt || null,
+          plannedEndAt: t.plannedEndAt || null,
+          actualStartAt: t.actualStartAt || null,
+          actualEndAt: t.actualEndAt || null,
+          status: isOverdue ? "OVERDUE" : t.status,
+          rawStatus: t.status,
+          completionNotes: t.completionNotes || "",
+          wasOverdue: Boolean(t.wasOverdue || isOverdue),
+          delayMinutes,
+        });
+      });
+    } else if (Array.isArray(d.checklist) && d.checklist.length > 0) {
+      d.checklist.forEach((c) => {
+        allTasks.push({
+          taskId: c._id,
+          dutyId: d._id,
+          dutyTitle: d.dutyTitle,
+          assignedStaff: d.staff,
+          title: c.text,
+          description: "",
+          plannedStartAt: null,
+          plannedEndAt: null,
+          actualStartAt: null,
+          actualEndAt: null,
+          status: c.completed ? "COMPLETED" : "PENDING",
+          rawStatus: c.completed ? "COMPLETED" : "PENDING",
+          completionNotes: "",
+          wasOverdue: false,
+          delayMinutes: 0,
+        });
+      });
+    }
+  });
+
+  const completedCount = allTasks.filter((t) => t.status === "COMPLETED").length;
+  const inProgressCount = allTasks.filter((t) => t.status === "IN_PROGRESS").length;
+  const overdueCount = allTasks.filter((t) => t.status === "OVERDUE").length;
+  const pendingCount = allTasks.filter((t) => t.status === "PENDING").length;
+  const totalTasks = allTasks.length;
+  const progressPercentage = totalTasks > 0 ? Math.round((completedCount / totalTasks) * 100) : 0;
+
+  return {
+    tasks: allTasks,
+    summary: {
+      total: totalTasks,
+      completed: completedCount,
+      inProgress: inProgressCount,
+      overdue: overdueCount,
+      pending: pendingCount,
+      progressPercentage,
+    },
+  };
+};
+
 module.exports = {
   createAssignment,
   getAssignments,
@@ -797,4 +1106,7 @@ module.exports = {
   updateAssignmentPayment,
   updateAssignmentChecklist,
   computeDutyHoursAndAmount,
+  startTask,
+  completeTask,
+  getEventTaskProgress,
 };

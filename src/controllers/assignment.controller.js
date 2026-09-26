@@ -285,6 +285,73 @@ const updatePayment = async (req, res, next) => {
   }
 };
 
+/**
+ * Start task execution
+ * POST /api/assignments/:dutyId/tasks/:taskId/start
+ */
+const startTask = async (req, res, next) => {
+  try {
+    const { dutyId, taskId } = req.params;
+    const assignment = await assignmentService.startTask(
+      dutyId,
+      taskId,
+      req.user.userId
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Task started successfully",
+      data: { assignment },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Complete task execution
+ * POST /api/assignments/:dutyId/tasks/:taskId/complete
+ */
+const completeTask = async (req, res, next) => {
+  try {
+    const { dutyId, taskId } = req.params;
+    const { completionNotes } = req.body;
+    const assignment = await assignmentService.completeTask(
+      dutyId,
+      taskId,
+      req.user.userId,
+      req.user.role,
+      completionNotes
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Task completed successfully",
+      data: { assignment },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get Event Task Progress Stats & Roster
+ * GET /api/assignments/event/:eventId/task-progress
+ */
+const getEventTaskProgress = async (req, res, next) => {
+  try {
+    const { eventId } = req.params;
+    const progress = await assignmentService.getEventTaskProgress(eventId);
+
+    res.status(200).json({
+      success: true,
+      data: progress,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createAssignment,
   getAssignments,
@@ -295,4 +362,7 @@ module.exports = {
   rejectAssignment,
   updateChecklist,
   updatePayment,
+  startTask,
+  completeTask,
+  getEventTaskProgress,
 };

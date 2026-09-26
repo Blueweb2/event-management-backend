@@ -43,6 +43,31 @@ const assertDutyIsToday = (dutyRecord) => {
   }
 };
 
+/**
+ * Enforce check-in window: Only allowed on event date, starting 15 minutes before startTime.
+ */
+const assertCheckInWindow = (dutyRecord) => {
+  assertDutyIsToday(dutyRecord);
+
+  const now = new Date();
+  const dutyDate = new Date(dutyRecord.dutyDate);
+
+  if (dutyRecord.startTime) {
+    const [hours, minutes] = dutyRecord.startTime.split(":").map(Number);
+    if (Number.isInteger(hours) && Number.isInteger(minutes)) {
+      const windowStart = new Date(dutyDate);
+      windowStart.setHours(hours, minutes - 15, 0, 0);
+
+      if (now < windowStart) {
+        const timeStr = windowStart.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        const error = new Error(`Check-in opens 15 minutes before the event start time (at ${timeStr})`);
+        error.statusCode = 400;
+        throw error;
+      }
+    }
+  }
+};
+
 const assertDutyHasStarted = (dutyRecord) => {
   const today = new Date();
   const dutyDate = new Date(dutyRecord.dutyDate);
@@ -62,6 +87,9 @@ const assertDutyHasStarted = (dutyRecord) => {
 // ─────────────────────────────────────────────
 
 const checkIn = async ({ duty, markedBy = null, staffId = null, notes = "" }) => {
+  const Event = require("../models/event.model");
+  const User = require("../models/user.model");
+
   const dutyRecord = await Duty.findById(duty);
   if (!dutyRecord) {
     const e = new Error("Duty not found");
@@ -75,7 +103,28 @@ const checkIn = async ({ duty, markedBy = null, staffId = null, notes = "" }) =>
     throw e;
   }
 
-  assertDutyIsToday(dutyRecord);
+  // 1. Verify event exists and is started by manager
+  const eventRecord = await Event.findOne({
+    $or: [{ _id: dutyRecord.event }, { booking: dutyRecord.event }],
+  });
+
+  if (!eventRecord) {
+    const e = new Error("The event does not exist.");
+    e.statusCode = 404;
+    throw e;
+  }
+
+  const isEventStarted =
+    (eventRecord.status === "IN_PROGRESS" || eventRecord.status === "Ongoing") &&
+    Boolean(eventRecord.startedAt);
+
+  if (!isEventStarted) {
+    const e = new Error("The event has not been started by the manager yet.");
+    e.statusCode = 400;
+    throw e;
+  }
+
+  assertCheckInWindow(dutyRecord);
 
   const existing = await Attendance.findOne({ duty });
   if (existing?.checkIn) {
@@ -98,13 +147,207 @@ const checkIn = async ({ duty, markedBy = null, staffId = null, notes = "" }) =>
 
   attendance.checkIn = now;
   attendance.status = status;
+  attendance.isPaused = false;
+  attendance.totalPauseMinutes = 0;
   attendance.markedBy = markedBy;
   
   if (notes) {
     attendance.notes = notes;
   }
 
+  if (!Array.isArray(attendance.sessions)) {
+    attendance.sessions = [];
+  }
+  attendance.sessions.push({
+    type: "CLOCK_IN",
+    timestamp: now,
+    notes: notes || "Staff checked in",
+  });
+
   await attendance.save();
+
+  dutyRecord.status = "IN_PROGRESS";
+  await dutyRecord.save();
+
+  // Log Event Audit Activity
+  const staffUser = await User.findById(dutyRecord.staff).select("name");
+  const staffName = staffUser?.name || "Staff";
+  if (!Array.isArray(eventRecord.activities)) {
+    eventRecord.activities = [];
+  }
+  eventRecord.activities.push({
+    action: "STAFF_CLOCK_IN",
+    description: `${staffName} clocked in`,
+    timestamp: now,
+    performedBy: dutyRecord.staff,
+  });
+  await eventRecord.save();
+
+  return defaultPopulate(Attendance.findById(attendance._id));
+};
+
+// ─────────────────────────────────────────────
+// PAUSE SHIFT
+// POST /api/attendance/pause
+// ─────────────────────────────────────────────
+
+const pauseShift = async ({ duty, markedBy = null, staffId = null, reason = "Break", notes = "" }) => {
+  const Event = require("../models/event.model");
+  const User = require("../models/user.model");
+
+  const dutyRecord = await Duty.findById(duty);
+  if (!dutyRecord) {
+    const e = new Error("Duty not found");
+    e.statusCode = 404;
+    throw e;
+  }
+
+  if (staffId && String(dutyRecord.staff) !== String(staffId)) {
+    const e = new Error("You can only pause your assigned duty");
+    e.statusCode = 403;
+    throw e;
+  }
+
+  const attendance = await Attendance.findOne({ duty });
+  if (!attendance || !attendance.checkIn) {
+    const e = new Error("Staff member must check in before pausing the shift");
+    e.statusCode = 400;
+    throw e;
+  }
+  if (attendance.checkOut) {
+    const e = new Error("Cannot pause a completed shift");
+    e.statusCode = 400;
+    throw e;
+  }
+  if (attendance.isPaused) {
+    const e = new Error("Shift is already paused");
+    e.statusCode = 409;
+    throw e;
+  }
+
+  const now = new Date();
+  attendance.isPaused = true;
+  attendance.pausedAt = now;
+
+  if (!Array.isArray(attendance.sessions)) {
+    attendance.sessions = [];
+  }
+  attendance.sessions.push({
+    type: "PAUSE",
+    timestamp: now,
+    reason: reason || "Break",
+    notes: notes || "",
+  });
+
+  if (notes) {
+    attendance.notes = attendance.notes ? `${attendance.notes}\n[Pause - ${reason}]: ${notes}` : `[Pause - ${reason}]: ${notes}`;
+  }
+
+  await attendance.save();
+
+  // Log Event Audit Activity
+  const staffUser = await User.findById(dutyRecord.staff).select("name");
+  const staffName = staffUser?.name || "Staff";
+  const eventRecord = await Event.findOne({
+    $or: [{ _id: dutyRecord.event }, { booking: dutyRecord.event }],
+  });
+  if (eventRecord) {
+    if (!Array.isArray(eventRecord.activities)) eventRecord.activities = [];
+    eventRecord.activities.push({
+      action: "STAFF_PAUSE",
+      description: `${staffName} paused shift (${reason || "Break"})`,
+      timestamp: now,
+      performedBy: dutyRecord.staff,
+    });
+    await eventRecord.save();
+  }
+
+  return defaultPopulate(Attendance.findById(attendance._id));
+};
+
+// ─────────────────────────────────────────────
+// RESUME SHIFT
+// POST /api/attendance/resume
+// ─────────────────────────────────────────────
+
+const resumeShift = async ({ duty, markedBy = null, staffId = null, notes = "" }) => {
+  const Event = require("../models/event.model");
+  const User = require("../models/user.model");
+
+  const dutyRecord = await Duty.findById(duty);
+  if (!dutyRecord) {
+    const e = new Error("Duty not found");
+    e.statusCode = 404;
+    throw e;
+  }
+
+  if (staffId && String(dutyRecord.staff) !== String(staffId)) {
+    const e = new Error("You can only resume your assigned duty");
+    e.statusCode = 403;
+    throw e;
+  }
+
+  const attendance = await Attendance.findOne({ duty });
+  if (!attendance || !attendance.isPaused) {
+    const e = new Error("Shift is not currently paused");
+    e.statusCode = 400;
+    throw e;
+  }
+
+  const now = new Date();
+  const pausedAt = new Date(attendance.pausedAt || now);
+  const pauseDurationMinutes = Math.max(0, Math.floor((now.getTime() - pausedAt.getTime()) / 60000));
+
+  const lastPauseSession = Array.isArray(attendance.sessions)
+    ? [...attendance.sessions].reverse().find((s) => s.type === "PAUSE")
+    : null;
+  const pauseReason = lastPauseSession?.reason || "Break";
+
+  attendance.isPaused = false;
+  attendance.totalPauseMinutes = (attendance.totalPauseMinutes || 0) + pauseDurationMinutes;
+  attendance.pausedAt = null;
+
+  if (!Array.isArray(attendance.pauseHistory)) {
+    attendance.pauseHistory = [];
+  }
+  attendance.pauseHistory.push({
+    pausedAt,
+    resumedAt: now,
+    durationMinutes: pauseDurationMinutes,
+    reason: pauseReason,
+  });
+
+  if (!Array.isArray(attendance.sessions)) {
+    attendance.sessions = [];
+  }
+  attendance.sessions.push({
+    type: "RESUME",
+    timestamp: now,
+    notes: notes || "",
+  });
+
+  if (notes) {
+    attendance.notes = attendance.notes ? `${attendance.notes}\n[Resume]: ${notes}` : `[Resume]: ${notes}`;
+  }
+
+  await attendance.save();
+
+  // Log Event Audit Activity
+  const staffUser = await User.findById(dutyRecord.staff).select("name");
+  const staffName = staffUser?.name || "Staff";
+  const eventRecord = await Event.findOne({
+    $or: [{ _id: dutyRecord.event }, { booking: dutyRecord.event }],
+  });
+  if (eventRecord) {
+    if (!Array.isArray(eventRecord.activities)) eventRecord.activities = [];
+    eventRecord.activities.push({
+      action: "STAFF_RESUME",
+      description: `${staffName} resumed shift`,
+      timestamp: now,
+      performedBy: dutyRecord.staff,
+    });
+    await eventRecord.save();
+  }
 
   return defaultPopulate(Attendance.findById(attendance._id));
 };
@@ -115,6 +358,9 @@ const checkIn = async ({ duty, markedBy = null, staffId = null, notes = "" }) =>
 // ─────────────────────────────────────────────
 
 const checkOut = async ({ duty, markedBy = null, staffId = null, notes = "" }) => {
+  const Event = require("../models/event.model");
+  const User = require("../models/user.model");
+
   const dutyRecord = await Duty.findById(duty);
   if (!dutyRecord) {
     const e = new Error("Duty not found");
@@ -148,8 +394,34 @@ const checkOut = async ({ duty, markedBy = null, staffId = null, notes = "" }) =
     throw e;
   }
 
-  attendance.checkOut = new Date();
+  const now = new Date();
+
+  if (attendance.isPaused) {
+    const pausedAt = new Date(attendance.pausedAt || now);
+    const pauseDurationMinutes = Math.max(0, Math.floor((now.getTime() - pausedAt.getTime()) / 60000));
+    attendance.totalPauseMinutes = (attendance.totalPauseMinutes || 0) + pauseDurationMinutes;
+    attendance.isPaused = false;
+    attendance.pausedAt = null;
+  }
+
+  attendance.checkOut = now;
   attendance.markedBy = markedBy || attendance.markedBy;
+
+  const grossMinutes = Math.max(0, Math.floor((now.getTime() - new Date(attendance.checkIn).getTime()) / 60000));
+  const activeMinutes = Math.max(0, grossMinutes - (attendance.totalPauseMinutes || 0));
+  const activeHours = Math.round((activeMinutes / 60) * 100) / 100;
+
+  attendance.activeMinutes = activeMinutes;
+  attendance.totalHours = activeHours;
+
+  if (!Array.isArray(attendance.sessions)) {
+    attendance.sessions = [];
+  }
+  attendance.sessions.push({
+    type: "CLOCK_OUT",
+    timestamp: now,
+    notes: notes || "",
+  });
 
   if (notes) {
     attendance.notes = attendance.notes 
@@ -158,6 +430,31 @@ const checkOut = async ({ duty, markedBy = null, staffId = null, notes = "" }) =
   }
 
   await attendance.save();
+
+  // Recalculate Duty record total hours & total compensation
+  dutyRecord.totalHours = activeHours;
+  if (dutyRecord.hourlyRate) {
+    dutyRecord.totalAmount = Math.round((activeHours * dutyRecord.hourlyRate) * 100) / 100;
+  }
+  dutyRecord.status = "COMPLETED";
+  await dutyRecord.save();
+
+  // Log Event Audit Activity
+  const staffUser = await User.findById(dutyRecord.staff).select("name");
+  const staffName = staffUser?.name || "Staff";
+  const eventRecord = await Event.findOne({
+    $or: [{ _id: dutyRecord.event }, { booking: dutyRecord.event }],
+  });
+  if (eventRecord) {
+    if (!Array.isArray(eventRecord.activities)) eventRecord.activities = [];
+    eventRecord.activities.push({
+      action: "STAFF_CLOCK_OUT",
+      description: `${staffName} clocked out (${activeHours} active hrs logged)`,
+      timestamp: now,
+      performedBy: dutyRecord.staff,
+    });
+    await eventRecord.save();
+  }
 
   return defaultPopulate(Attendance.findById(attendance._id));
 };
@@ -608,12 +905,99 @@ const getMyAttendance = async ({
 };
 
 // ─────────────────────────────────────────────
+// GET EVENT STAFF ATTENDANCE TIMELINE & STATS
+// GET /api/attendance/event/:eventId
+// ─────────────────────────────────────────────
+
+const getEventStaffAttendance = async (eventId) => {
+  const Event = require("../models/event.model");
+  const Duty = require("../models/duty.model");
+
+  const eventRecord = await Event.findOne({
+    $or: [{ _id: eventId }, { booking: eventId }],
+  });
+
+  const searchBookingId = eventRecord ? eventRecord.booking : eventId;
+
+  const duties = await Duty.find({ event: searchBookingId })
+    .populate("staff", "name username employeeId department phone email role")
+    .populate("assignedBy", "name username email")
+    .lean();
+
+  const dutyIds = duties.map((d) => d._id);
+  const attendances = await Attendance.find({ duty: { $in: dutyIds } }).lean();
+
+  const attMap = new Map();
+  attendances.forEach((a) => attMap.set(String(a.duty), a));
+
+  const staffList = duties.map((d) => {
+    const att = attMap.get(String(d._id));
+    const now = new Date();
+
+    let currentStatus = "NOT_CLOCKED_IN";
+    let activeMinutes = 0;
+    let totalPausedMinutes = att?.totalPauseMinutes || 0;
+
+    if (att?.checkIn) {
+      if (att.checkOut) {
+        currentStatus = "CLOCKED_OUT";
+        const grossSecs = Math.max(0, Math.floor((new Date(att.checkOut).getTime() - new Date(att.checkIn).getTime()) / 1000));
+        const pauseSecs = totalPausedMinutes * 60;
+        activeMinutes = Math.max(0, Math.round((grossSecs - pauseSecs) / 60));
+      } else if (att.isPaused) {
+        currentStatus = "PAUSED";
+        const pauseNowSecs = att.pausedAt ? Math.max(0, Math.floor((now.getTime() - new Date(att.pausedAt).getTime()) / 1000)) : 0;
+        const grossSecs = Math.max(0, Math.floor((now.getTime() - new Date(att.checkIn).getTime()) / 1000));
+        const pauseSecs = totalPausedMinutes * 60 + pauseNowSecs;
+        activeMinutes = Math.max(0, Math.round((grossSecs - pauseSecs) / 60));
+        totalPausedMinutes += Math.round(pauseNowSecs / 60);
+      } else {
+        currentStatus = "ACTIVE";
+        const grossSecs = Math.max(0, Math.floor((now.getTime() - new Date(att.checkIn).getTime()) / 1000));
+        const pauseSecs = totalPausedMinutes * 60;
+        activeMinutes = Math.max(0, Math.round((grossSecs - pauseSecs) / 60));
+      }
+    }
+
+    return {
+      dutyId: d._id,
+      dutyTitle: d.dutyTitle,
+      role: d.role,
+      department: d.department,
+      staff: d.staff,
+      dutyDate: d.dutyDate,
+      startTime: d.startTime,
+      endTime: d.endTime,
+      hourlyRate: d.hourlyRate || 0,
+      paymentStatus: d.paymentStatus || "PENDING",
+      attendanceId: att?._id || null,
+      checkIn: att?.checkIn || null,
+      checkOut: att?.checkOut || null,
+      currentStatus,
+      isPaused: Boolean(att?.isPaused),
+      pausedAt: att?.pausedAt || null,
+      activeMinutes,
+      activeHours: Math.round((activeMinutes / 60) * 100) / 100,
+      totalPausedMinutes,
+      earnings: Math.round(((activeMinutes / 60) * (d.hourlyRate || 0)) * 100) / 100,
+      sessions: att?.sessions || [],
+      pauseHistory: att?.pauseHistory || [],
+      notes: att?.notes || "",
+    };
+  });
+
+  return staffList;
+};
+
+// ─────────────────────────────────────────────
 // EXPORTS
 // ─────────────────────────────────────────────
 
 module.exports = {
   checkIn,
   checkOut,
+  pauseShift,
+  resumeShift,
   markAbsent,
   bulkMark,
   getAttendance,
@@ -623,4 +1007,5 @@ module.exports = {
   getStaffSummary,
   getEventSummary,
   getMyAttendance,
+  getEventStaffAttendance,
 };
