@@ -230,12 +230,15 @@ const getEventStaffingRequirements = async (eventId) => {
     (Array.isArray(foodMenu?.items) && foodMenu.items.length > 0);
 
   if (hasCatering) {
-    const cateringStaff = enrichedStaffPool.filter(
+    let cateringStaff = enrichedStaffPool.filter(
       (s) =>
         s.department.toLowerCase().includes("cater") ||
         s.department.toLowerCase().includes("food") ||
         s.department.toLowerCase().includes("beverage")
     );
+    if (cateringStaff.length === 0) {
+      cateringStaff = enrichedStaffPool;
+    }
 
     const cateringDuties = existingDuties.filter(
       (d) =>
@@ -276,11 +279,29 @@ const getEventStaffingRequirements = async (eventId) => {
   bookedServices.forEach((svc, index) => {
     const mappedDept = mapCategoryToDepartment(svc.category, svc.serviceName);
 
-    const deptStaff = enrichedStaffPool.filter(
-      (s) =>
-        s.department.toLowerCase().includes(mappedDept.toLowerCase()) ||
-        mappedDept.toLowerCase().includes(s.department.toLowerCase())
-    );
+    let deptStaff = enrichedStaffPool.filter((s) => {
+      const sDept = (s.department || "").toLowerCase();
+      const mDept = mappedDept.toLowerCase();
+      const sCat = (svc.category || "").toLowerCase();
+      const sTitle = (svc.serviceName || "").toLowerCase();
+
+      return (
+        sDept.includes(mDept) ||
+        mDept.includes(sDept) ||
+        sDept.includes(sCat) ||
+        sDept.includes(sTitle) ||
+        (mDept === "logistics" && (sDept.includes("setup") || sDept.includes("operation") || sDept.includes("event") || sDept.includes("transport") || sDept.includes("warehouse"))) ||
+        (mDept === "decoration" && (sDept.includes("stage") || sDept.includes("decor") || sDept.includes("floral") || sDept.includes("flower"))) ||
+        (mDept === "sound & lighting" && (sDept.includes("sound") || sDept.includes("light") || sDept.includes("audio") || sDept.includes("dj") || sDept.includes("music"))) ||
+        (mDept === "photography & media" && (sDept.includes("photo") || sDept.includes("video") || sDept.includes("media") || sDept.includes("camera"))) ||
+        (mDept === "security" && (sDept.includes("security") || sDept.includes("guard") || sDept.includes("valet"))) ||
+        (mDept === "hospitality" && (sDept.includes("host") || sDept.includes("usher") || sDept.includes("reception")))
+      );
+    });
+
+    if (deptStaff.length === 0) {
+      deptStaff = enrichedStaffPool;
+    }
 
     const matchingDuties = existingDuties.filter(
       (d) =>
@@ -313,12 +334,16 @@ const getEventStaffingRequirements = async (eventId) => {
   });
 
   // 5c. Always provide General Operations stream if needed
-  const opsStaff = enrichedStaffPool.filter(
+  let opsStaff = enrichedStaffPool.filter(
     (s) =>
       s.department.toLowerCase().includes("operation") ||
       s.department.toLowerCase().includes("general") ||
-      s.department.toLowerCase().includes("manager")
+      s.department.toLowerCase().includes("manager") ||
+      s.department.toLowerCase().includes("event")
   );
+  if (opsStaff.length === 0) {
+    opsStaff = enrichedStaffPool;
+  }
 
   const opsDuties = existingDuties.filter(
     (d) =>

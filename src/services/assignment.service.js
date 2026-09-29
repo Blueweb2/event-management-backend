@@ -818,6 +818,19 @@ const updateAssignmentChecklist = async (
     throw error;
   }
 
+  const Event = require("../models/event.model");
+  const eventRecord = await Event.findOne({
+    $or: [{ _id: assignment.event }, { booking: assignment.event }],
+  });
+  if (
+    eventRecord &&
+    ["COMPLETED", "Completed", "Invoiced", "Settled"].includes(eventRecord.status)
+  ) {
+    const error = new Error("Cannot edit sub-tasks or checklist for a completed event.");
+    error.statusCode = 400;
+    throw error;
+  }
+
   assignment.checklist = Array.isArray(checklist) ? checklist : [];
   await assignment.save();
 
@@ -938,6 +951,19 @@ const completeTask = async (dutyId, taskId, staffId, userRole = "", completionNo
     throw error;
   }
 
+  const eventRecord = await Event.findOne({
+    $or: [{ _id: duty.event }, { booking: duty.event }],
+  });
+
+  if (
+    eventRecord &&
+    ["COMPLETED", "Completed", "Invoiced", "Settled"].includes(eventRecord.status)
+  ) {
+    const error = new Error("Cannot modify or complete tasks for a completed event.");
+    error.statusCode = 400;
+    throw error;
+  }
+
   const now = new Date();
   let taskTitle = "";
   let wasOverdue = false;
@@ -985,9 +1011,6 @@ const completeTask = async (dutyId, taskId, staffId, userRole = "", completionNo
   // Log Event Audit Activity
   const staffUser = await User.findById(staffId).select("name");
   const staffName = staffUser?.name || "Staff";
-  const eventRecord = await Event.findOne({
-    $or: [{ _id: duty.event }, { booking: duty.event }],
-  });
 
   if (eventRecord) {
     if (!Array.isArray(eventRecord.activities)) eventRecord.activities = [];

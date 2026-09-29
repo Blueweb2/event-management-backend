@@ -20,6 +20,12 @@ const serviceOptionSchema = new mongoose.Schema(
       min: 0,
     },
 
+    imageUrl: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
     pricingType: {
       type: String,
       enum: [
@@ -64,6 +70,12 @@ const serviceSchema = new mongoose.Schema(
     },
 
     description: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    imageUrl: {
       type: String,
       trim: true,
       default: "",

@@ -1,5 +1,23 @@
 const Task = require("../models/task.model");
 const Duty = require("../models/duty.model");
+const Event = require("../models/event.model");
+
+const checkEventNotCompleted = async (dutyId) => {
+  if (!dutyId) return;
+  const dutyRecord = await Duty.findById(dutyId);
+  if (!dutyRecord) return;
+  const eventRecord = await Event.findOne({
+    $or: [{ _id: dutyRecord.event }, { booking: dutyRecord.event }],
+  });
+  if (
+    eventRecord &&
+    ["COMPLETED", "Completed", "Invoiced", "Settled"].includes(eventRecord.status)
+  ) {
+    const error = new Error("Cannot add, edit, or modify tasks for a completed event.");
+    error.statusCode = 400;
+    throw error;
+  }
+};
 
 /**
  * Create task
@@ -25,6 +43,8 @@ const createTask = async ({
     error.statusCode = 404;
     throw error;
   }
+
+  await checkEventNotCompleted(duty);
 
   const task = await Task.create({
     duty,
@@ -182,6 +202,8 @@ const updateTask = async (
     throw error;
   }
 
+  await checkEventNotCompleted(task.duty);
+
   if (title !== undefined) {
     task.title = title.trim();
   }
@@ -269,6 +291,8 @@ const deleteTask = async (taskId) => {
     error.statusCode = 404;
     throw error;
   }
+
+  await checkEventNotCompleted(task.duty);
 
   task.status = "CANCELLED";
 

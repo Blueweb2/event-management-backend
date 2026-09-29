@@ -25,6 +25,7 @@ const createService = async (req, res, next) => {
       name,
       category,
       description,
+      imageUrl,
       pricingType,
       basePrice,
       unitLabel,
@@ -128,6 +129,9 @@ const createService = async (req, res, next) => {
       category: serviceCategory,
       description:
         description?.trim() || "",
+
+      imageUrl:
+        imageUrl?.trim() || "",
 
       pricingType,
 
@@ -247,6 +251,7 @@ const updateService = async (
       name,
       category,
       description,
+      imageUrl,
       pricingType,
       basePrice,
       unitLabel,
@@ -329,6 +334,11 @@ const updateService = async (
     if (description !== undefined) {
       service.description =
         description.trim();
+    }
+
+    if (imageUrl !== undefined) {
+      service.imageUrl =
+        imageUrl.trim();
     }
 
     // ========================================
@@ -486,10 +496,88 @@ const deleteService = async (
   }
 };
 
+// ==========================================
+// UPLOAD SERVICE IMAGE
+// POST /api/services/upload
+// ==========================================
+
+const uploadServiceImage = async (req, res, next) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "Service image file is required.",
+      });
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: "Image uploaded successfully.",
+      data: {
+        imageUrl: `/uploads/services/${req.file.filename}`,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ==========================================
+// GET SERVICE LIBRARY IMAGES
+// GET /api/services/library-images
+// ==========================================
+
+const getServiceLibraryImages = async (req, res, next) => {
+  try {
+    const services = await Service.find({}, "name category imageUrl options.name options.imageUrl").lean();
+    
+    const imageMap = new Map();
+
+    services.forEach((s) => {
+      if (s.imageUrl && s.imageUrl.trim()) {
+        const url = s.imageUrl.trim();
+        if (!imageMap.has(url)) {
+          imageMap.set(url, {
+            url,
+            title: s.name,
+            category: s.category,
+            source: "uploaded",
+          });
+        }
+      }
+
+      if (Array.isArray(s.options)) {
+        s.options.forEach((opt) => {
+          if (opt.imageUrl && opt.imageUrl.trim()) {
+            const url = opt.imageUrl.trim();
+            if (!imageMap.has(url)) {
+              imageMap.set(url, {
+                url,
+                title: `${s.name} - ${opt.name}`,
+                category: s.category,
+                source: "uploaded",
+              });
+            }
+          }
+        });
+      }
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: Array.from(imageMap.values()),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createService,
   getServices,
   getServiceById,
+  getServiceLibraryImages,
   updateService,
   deleteService,
+  uploadServiceImage,
 };
