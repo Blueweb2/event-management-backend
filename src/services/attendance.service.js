@@ -44,28 +44,10 @@ const assertDutyIsToday = (dutyRecord) => {
 };
 
 /**
- * Enforce check-in window: Only allowed on event date, starting 15 minutes before startTime.
+ * Enforce check-in window: Only allowed on event date once the manager starts the event.
  */
 const assertCheckInWindow = (dutyRecord) => {
   assertDutyIsToday(dutyRecord);
-
-  const now = new Date();
-  const dutyDate = new Date(dutyRecord.dutyDate);
-
-  if (dutyRecord.startTime) {
-    const [hours, minutes] = dutyRecord.startTime.split(":").map(Number);
-    if (Number.isInteger(hours) && Number.isInteger(minutes)) {
-      const windowStart = new Date(dutyDate);
-      windowStart.setHours(hours, minutes - 15, 0, 0);
-
-      if (now < windowStart) {
-        const timeStr = windowStart.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-        const error = new Error(`Check-in opens 15 minutes before the event start time (at ${timeStr})`);
-        error.statusCode = 400;
-        throw error;
-      }
-    }
-  }
 };
 
 const assertDutyHasStarted = (dutyRecord) => {
