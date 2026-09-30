@@ -415,6 +415,34 @@ const recordPayment = async (bookingId, paymentData, userId = null) => {
     recordedBy: userId,
   };
 
+  const event = await Event.findOne({ booking: booking._id });
+  if (event) {
+    const validStatuses = [
+      "IN_PROGRESS",
+      "Ongoing",
+      "COMPLETED",
+      "Completed",
+      "Invoiced",
+      "Settled",
+    ];
+    const isFullSettlement =
+      paymentType === "FINAL_BALANCE" ||
+      paymentType === "FULL" ||
+      (booking.paidAmount + numericAmount >= (booking.total || 0) && (booking.total || 0) > 0);
+
+    if (
+      isFullSettlement &&
+      paymentType !== "ADVANCE" &&
+      !validStatuses.includes(event.status)
+    ) {
+      const error = new Error(
+        "Only in-progress or completed events can be marked as fully paid / settled. You can record deposit as an Advance Payment."
+      );
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
   booking.paymentHistory.push(paymentRecord);
   booking.paidAmount = booking.paymentHistory.reduce((sum, item) => sum + (item.amount || 0), 0);
 
@@ -434,7 +462,6 @@ const recordPayment = async (bookingId, paymentData, userId = null) => {
   await booking.save();
 
   // Sync to associated Event if exists
-  const event = await Event.findOne({ booking: booking._id });
   if (event) {
     event.paymentHistory = booking.paymentHistory;
     event.paidAmount = booking.paidAmount;

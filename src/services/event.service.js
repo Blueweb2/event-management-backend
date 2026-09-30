@@ -263,7 +263,8 @@ const getEventById = async (eventId) => {
 
 const updateEvent = async (
   eventId,
-  updateData
+  updateData,
+  userId = null
 ) => {
   // ==========================================
   // Fields That Can Be Updated
@@ -278,6 +279,7 @@ const updateEvent = async (
     "location",
     "description",
     "notes",
+    "status",
   ];
 
   const updates = {};
@@ -288,6 +290,36 @@ const updateEvent = async (
     ) {
       updates[field] = updateData[field];
     }
+  }
+
+  const isMarkingCompleted =
+    updates.status && ["Completed", "COMPLETED"].includes(updates.status);
+
+  if (updates.status && ["Invoiced", "Settled"].includes(updates.status)) {
+    const currentEvent = await Event.findById(eventId);
+    if (currentEvent) {
+      const validCurrentStatuses = [
+        "IN_PROGRESS",
+        "Ongoing",
+        "COMPLETED",
+        "Completed",
+        "Invoiced",
+        "Settled",
+      ];
+      if (!validCurrentStatuses.includes(currentEvent.status)) {
+        const error = new Error(
+          "Only in-progress or completed events can be marked as paid / settled."
+        );
+        error.statusCode = 400;
+        throw error;
+      }
+    }
+  }
+
+  if (isMarkingCompleted) {
+    const now = new Date();
+    updates.completedAt = now;
+    if (userId) updates.completedBy = userId;
   }
 
   // ==========================================
@@ -318,7 +350,118 @@ const updateEvent = async (
     throw error;
   }
 
+  if (isMarkingCompleted) {
+    await autoCheckoutEventStaff(eventId, userId);
+  }
+
   return event;
+};
+
+/**
+ * Automatically check out all active staff attendances and complete duties when an event is completed.
+ */
+const autoCheckoutEventStaff = async (eventId, managerId = null, now = new Date()) => {
+  const Duty = require("../models/duty.model");
+  const Attendance = require("../models/attendance.model");
+
+  const eventRecord = await Event.findById(eventId);
+  if (!eventRecord) return 0;
+
+  const eventIds = [eventRecord._id];
+  if (eventRecord.booking) {
+    eventIds.push(
+      typeof eventRecord.booking === "object" && eventRecord.booking._id
+        ? eventRecord.booking._id
+        : eventRecord.booking
+    );
+  }
+
+  // Find duties assigned to this event
+  const duties = await Duty.find({ event: { $in: eventIds } });
+  const dutyIds = duties.map((d) => d._id);
+
+  // Find all active attendances for this event or duties
+  const activeAttendances = await Attendance.find({
+    $or: [{ event: { $in: eventIds } }, { duty: { $in: dutyIds } }],
+    checkIn: { $ne: null },
+    checkOut: null,
+  });
+
+  let checkedOutCount = 0;
+
+  for (const attendance of activeAttendances) {
+    if (attendance.isPaused) {
+      const pausedAt = new Date(attendance.pausedAt || now);
+      const pauseDurationMinutes = Math.max(
+        0,
+        Math.floor((now.getTime() - pausedAt.getTime()) / 60000)
+      );
+      attendance.totalPauseMinutes =
+        (attendance.totalPauseMinutes || 0) + pauseDurationMinutes;
+      attendance.isPaused = false;
+      attendance.pausedAt = null;
+    }
+
+    const grossMinutes = Math.max(
+      0,
+      Math.floor((now.getTime() - new Date(attendance.checkIn).getTime()) / 60000)
+    );
+    const activeMinutes = Math.max(
+      0,
+      grossMinutes - (attendance.totalPauseMinutes || 0)
+    );
+    const activeHours = Math.round((activeMinutes / 60) * 100) / 100;
+
+    attendance.checkOut = now;
+    if (managerId) attendance.markedBy = managerId;
+    attendance.activeMinutes = activeMinutes;
+    attendance.totalHours = activeHours;
+
+    if (!Array.isArray(attendance.sessions)) {
+      attendance.sessions = [];
+    }
+    attendance.sessions.push({
+      type: "CLOCK_OUT",
+      timestamp: now,
+      notes: "Auto-checkout upon event completion by manager",
+    });
+
+    const autoNote = "Auto-checked out upon event completion";
+    attendance.notes = attendance.notes
+      ? `${attendance.notes}\n${autoNote}`
+      : autoNote;
+
+    await attendance.save();
+
+    // Update associated Duty
+    if (attendance.duty) {
+      const dutyRecord = await Duty.findById(attendance.duty);
+      if (dutyRecord) {
+        dutyRecord.totalHours = activeHours;
+        if (dutyRecord.hourlyRate) {
+          dutyRecord.totalAmount =
+            Math.round((activeHours * dutyRecord.hourlyRate) * 100) / 100;
+        }
+        dutyRecord.status = "COMPLETED";
+        await dutyRecord.save();
+      }
+    }
+
+    checkedOutCount++;
+  }
+
+  // Transition all remaining active/assigned duties for this event to COMPLETED
+  await Duty.updateMany(
+    {
+      event: { $in: eventIds },
+      status: { $in: ["ASSIGNED", "ACCEPTED", "IN_PROGRESS"] },
+    },
+    {
+      $set: { status: "COMPLETED" },
+    }
+  );
+
+  return checkedOutCount;
 };
 
 // ==========================================
@@ -366,15 +509,34 @@ const updateEventStatus = async (
 
   const updateFields = { status };
   const now = new Date();
+  let autoCheckoutCount = 0;
 
   if (["Completed", "COMPLETED"].includes(status)) {
     if (!existingEvent.completedAt) {
       updateFields.completedAt = now;
       updateFields.completedBy = userId || null;
     }
+    // Auto-checkout all currently checked-in staff for this event
+    autoCheckoutCount = await autoCheckoutEventStaff(eventId, userId, now);
   }
 
   if (["Invoiced", "Settled"].includes(status)) {
+    const validCurrentStatuses = [
+      "IN_PROGRESS",
+      "Ongoing",
+      "COMPLETED",
+      "Completed",
+      "Invoiced",
+      "Settled",
+    ];
+    if (!validCurrentStatuses.includes(existingEvent.status)) {
+      const error = new Error(
+        "Only in-progress or completed events can be marked as paid / settled."
+      );
+      error.statusCode = 400;
+      throw error;
+    }
+
     if (!existingEvent.invoicedAt) {
       updateFields.invoicedAt = now;
       updateFields.invoicedBy = userId || null;
@@ -394,9 +556,13 @@ const updateEventStatus = async (
 
   if (event) {
     if (!Array.isArray(event.activities)) event.activities = [];
-    const actionDesc =
+    let actionDesc =
       ["Completed", "COMPLETED"].includes(status)
-        ? `Event marked as Completed by ${actorName}`
+        ? `Event marked as Completed by ${actorName}${
+            autoCheckoutCount > 0
+              ? ` (${autoCheckoutCount} staff automatically checked out)`
+              : ""
+          }`
         : ["Invoiced", "Settled"].includes(status)
         ? `Event invoice generated and settled by ${actorName}`
         : `Event status updated to ${status} by ${actorName}`;
@@ -502,6 +668,31 @@ const cancelEvent = async (eventId) => {
 };
 
 // ==========================================
+// Delete Event
+// ==========================================
+
+const deleteEvent = async (eventId) => {
+  const Duty = require("../models/duty.model");
+  const Attendance = require("../models/attendance.model");
+  const Task = require("../models/task.model");
+
+  const event = await Event.findByIdAndDelete(eventId);
+  if (!event) {
+    const error = new Error("Event not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  await Promise.allSettled([
+    Duty.deleteMany({ event: eventId }),
+    Attendance.deleteMany({ event: eventId }),
+    Task.deleteMany({ event: eventId }),
+  ]);
+
+  return { success: true, message: "Event deleted successfully" };
+};
+
+// ==========================================
 // Export
 // ==========================================
 
@@ -513,4 +704,5 @@ module.exports = {
   updateEventStatus,
   startEvent,
   cancelEvent,
+  deleteEvent,
 };

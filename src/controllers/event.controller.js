@@ -93,7 +93,8 @@ const updateEvent = async (req, res, next) => {
   try {
     const event = await eventService.updateEvent(
       req.params.id,
-      req.body
+      req.body,
+      req.user?.userId || req.user?.id
     );
 
     return res.status(200).json({
@@ -124,7 +125,7 @@ const updateEventStatus = async (req, res, next) => {
     const event = await eventService.updateEventStatus(
       req.params.id,
       status,
-      req.user?.id
+      req.user?.userId || req.user?.id
     );
 
     return res.status(200).json({
@@ -151,6 +152,23 @@ const cancelEvent = async (req, res, next) => {
       success: true,
       message: "Event cancelled successfully",
       data: event,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ==========================================
+// Delete Event
+// ==========================================
+
+const deleteEvent = async (req, res, next) => {
+  try {
+    const result = await eventService.deleteEvent(req.params.id);
+    return res.status(200).json({
+      success: true,
+      message: result.message || "Event deleted successfully",
+      data: result,
     });
   } catch (error) {
     next(error);
@@ -211,4 +229,5 @@ module.exports = {
   startEvent,
   getActivityTimeline,
   cancelEvent,
+  deleteEvent,
 };

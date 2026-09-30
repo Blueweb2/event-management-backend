@@ -9,6 +9,7 @@ const {
   startEvent,
   getActivityTimeline,
   cancelEvent,
+  deleteEvent,
 } = require("../controllers/event.controller");
 
 const { authenticate } = require("../middlewares/auth.middleware");
@@ -77,11 +78,19 @@ router.patch(
 );
 
 // Cancel event
+router.patch(
+  "/:id/cancel",
+  authenticate,
+  authorize("Manager"),
+  cancelEvent
+);
+
+// Delete event
 router.delete(
   "/:id",
   authenticate,
   authorize("Manager"),
-  cancelEvent
+  deleteEvent
 );
 
 module.exports = router;

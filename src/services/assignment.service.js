@@ -566,6 +566,15 @@ const updateAssignment = async (
       error.statusCode = 400;
       throw error;
     }
+
+    if (paymentStatus === "PAID" && assignment.status !== "COMPLETED") {
+      const error = new Error(
+        "Only completed shifts can be marked as paid. Staff must complete their duty first."
+      );
+      error.statusCode = 400;
+      throw error;
+    }
+
     assignment.paymentStatus = paymentStatus;
     if (paymentStatus === "PAID" && !assignment.paidAt) {
       assignment.paidAt = paidAt ? new Date(paidAt) : new Date();
@@ -771,6 +780,15 @@ const updateAssignmentPayment = async (
       error.statusCode = 400;
       throw error;
     }
+
+    if (paymentStatus === "PAID" && assignment.status !== "COMPLETED") {
+      const error = new Error(
+        "Only completed shifts can be marked as paid. Staff must complete their duty first."
+      );
+      error.statusCode = 400;
+      throw error;
+    }
+
     assignment.paymentStatus = paymentStatus;
     if (paymentStatus === "PAID" && !assignment.paidAt) {
       assignment.paidAt = paidAt ? new Date(paidAt) : new Date();
