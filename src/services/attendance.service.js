@@ -27,16 +27,29 @@ const resolveStatus = (dutyRecord, now) => {
   return now > expected ? "LATE" : "PRESENT";
 };
 
-const assertDutyIsToday = (dutyRecord) => {
+const assertDutyIsToday = (dutyRecord, eventRecord) => {
+  // If the manager has started the event, staff is permitted to clock in
+  if (
+    eventRecord &&
+    (eventRecord.status === "IN_PROGRESS" || eventRecord.status === "Ongoing" || Boolean(eventRecord.startedAt))
+  ) {
+    return;
+  }
+
   const today = new Date();
   const dutyDate = new Date(dutyRecord.dutyDate);
+
+  const todayStr = today.toISOString().slice(0, 10);
+  const dutyDateStr = !isNaN(dutyDate.getTime()) ? dutyDate.toISOString().slice(0, 10) : "";
 
   const isToday =
     today.getFullYear() === dutyDate.getFullYear() &&
     today.getMonth() === dutyDate.getMonth() &&
     today.getDate() === dutyDate.getDate();
 
-  if (!isToday) {
+  const isSameDayUTC = todayStr === dutyDateStr;
+
+  if (!isToday && !isSameDayUTC) {
     const error = new Error("Attendance can only be recorded on the duty date");
     error.statusCode = 400;
     throw error;
@@ -44,10 +57,10 @@ const assertDutyIsToday = (dutyRecord) => {
 };
 
 /**
- * Enforce check-in window: Only allowed on event date once the manager starts the event.
+ * Enforce check-in window: Allowed once the manager starts the event or on event date.
  */
-const assertCheckInWindow = (dutyRecord) => {
-  assertDutyIsToday(dutyRecord);
+const assertCheckInWindow = (dutyRecord, eventRecord) => {
+  assertDutyIsToday(dutyRecord, eventRecord);
 };
 
 const assertDutyHasStarted = (dutyRecord) => {
@@ -71,6 +84,7 @@ const assertDutyHasStarted = (dutyRecord) => {
 const checkIn = async ({ duty, markedBy = null, staffId = null, notes = "" }) => {
   const Event = require("../models/event.model");
   const User = require("../models/user.model");
+  const { getIO } = require("../socket");
 
   const dutyRecord = await Duty.findById(duty);
   if (!dutyRecord) {
@@ -97,7 +111,8 @@ const checkIn = async ({ duty, markedBy = null, staffId = null, notes = "" }) =>
   }
 
   const isEventStarted =
-    (eventRecord.status === "IN_PROGRESS" || eventRecord.status === "Ongoing") &&
+    eventRecord.status === "IN_PROGRESS" ||
+    eventRecord.status === "Ongoing" ||
     Boolean(eventRecord.startedAt);
 
   if (!isEventStarted) {
@@ -106,7 +121,7 @@ const checkIn = async ({ duty, markedBy = null, staffId = null, notes = "" }) =>
     throw e;
   }
 
-  assertCheckInWindow(dutyRecord);
+  assertCheckInWindow(dutyRecord, eventRecord);
 
   const existing = await Attendance.findOne({ duty });
   if (existing?.checkIn) {
@@ -164,6 +179,26 @@ const checkIn = async ({ duty, markedBy = null, staffId = null, notes = "" }) =>
     performedBy: dutyRecord.staff,
   });
   await eventRecord.save();
+
+  // Broadcast real-time update
+  try {
+    const io = typeof getIO === "function" ? getIO() : null;
+    if (io) {
+      io.to(`event:${eventRecord._id}`).emit("attendance:updated", {
+        eventId: String(eventRecord._id),
+        dutyId: String(dutyRecord._id),
+        staffId: String(dutyRecord.staff),
+        status: "IN_PROGRESS",
+      });
+      io.emit("attendance:updated", {
+        eventId: String(eventRecord._id),
+        dutyId: String(dutyRecord._id),
+        staffId: String(dutyRecord.staff),
+      });
+    }
+  } catch (socketErr) {
+    console.warn("Non-fatal Socket.IO attendance update warning:", socketErr.message);
+  }
 
   return defaultPopulate(Attendance.findById(attendance._id));
 };

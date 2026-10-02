@@ -1,5 +1,7 @@
 const { Server } = require("socket.io");
 
+let ioInstance = null;
+
 const initializeSocket = (server) => {
   const io = new Server(server, {
     cors: {
@@ -8,6 +10,8 @@ const initializeSocket = (server) => {
       methods: ["GET", "POST"],
     },
   });
+
+  ioInstance = io;
 
   io.on("connection", (socket) => {
     console.log("🔌 Client connected:", socket.id);
@@ -28,6 +32,14 @@ const initializeSocket = (server) => {
       });
     });
 
+    // Join room for a specific staff user
+    socket.on("join:staff", (staffId) => {
+      if (!staffId) return;
+      const room = `staff:${staffId}`;
+      socket.join(room);
+      console.log(`👥 Socket ${socket.id} joined staff room: ${room}`);
+    });
+
     socket.on("disconnect", () => {
       console.log("🔌 Client disconnected:", socket.id);
     });
@@ -35,5 +47,10 @@ const initializeSocket = (server) => {
 
   return io;
 };
+
+const getIO = () => ioInstance;
+
+initializeSocket.initializeSocket = initializeSocket;
+initializeSocket.getIO = getIO;
 
 module.exports = initializeSocket;

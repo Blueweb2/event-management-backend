@@ -121,8 +121,51 @@ const getEvents = async ({
   // Status Filter
   // ==========================================
 
-  if (status) {
-    query.status = status;
+  if (status && status !== "All") {
+    const s = String(status).trim().toLowerCase();
+    if (s === "completed") {
+      query.status = {
+        $in: [
+          "Completed",
+          "COMPLETED",
+          "Settled",
+          "Invoiced",
+          "SETTLED",
+          "INVOICED",
+          "completed",
+          "settled",
+          "invoiced",
+        ],
+      };
+    } else if (s === "ongoing" || s === "in_progress") {
+      query.status = {
+        $in: [
+          "Ongoing",
+          "IN_PROGRESS",
+          "READY_TO_START",
+          "ongoing",
+          "in_progress",
+          "ready_to_start",
+        ],
+      };
+    } else if (s === "upcoming" || s === "confirmed") {
+      query.status = {
+        $in: [
+          "Upcoming",
+          "CONFIRMED",
+          "READY_TO_START",
+          "upcoming",
+          "confirmed",
+          "ready_to_start",
+        ],
+      };
+    } else if (s === "cancelled") {
+      query.status = {
+        $in: ["Cancelled", "CANCELLED", "cancelled"],
+      };
+    } else {
+      query.status = new RegExp(`^${status}$`, "i");
+    }
   }
 
   // ==========================================
@@ -586,6 +629,8 @@ const updateEventStatus = async (
 
 const startEvent = async (eventId, managerId) => {
   const User = require("../models/user.model");
+  const Duty = require("../models/duty.model");
+  const { getIO } = require("../socket");
   const event = await Event.findById(eventId);
 
   if (!event) {
@@ -610,9 +655,14 @@ const startEvent = async (eventId, managerId) => {
   const now = new Date();
   const todayStr = now.toISOString().slice(0, 10);
   const eventDateObj = new Date(event.eventDate);
-  const eventDateStr = eventDateObj.toISOString().slice(0, 10);
+  const eventDateStr = !isNaN(eventDateObj.getTime()) ? eventDateObj.toISOString().slice(0, 10) : "";
 
-  if (todayStr < eventDateStr) {
+  const isToday =
+    now.getFullYear() === eventDateObj.getFullYear() &&
+    now.getMonth() === eventDateObj.getMonth() &&
+    now.getDate() === eventDateObj.getDate();
+
+  if (!isToday && todayStr < eventDateStr) {
     const formattedDate = eventDateObj.toLocaleDateString("en-US", {
       day: "numeric",
       month: "long",
@@ -651,6 +701,53 @@ const startEvent = async (eventId, managerId) => {
   // Also keep associated booking in sync
   if (event.booking) {
     await Booking.findByIdAndUpdate(event.booking, { status: "Confirmed" });
+  }
+
+  // Find associated duties and broadcast real-time socket events to staff
+  try {
+    const associatedDuties = await Duty.find({
+      $or: [
+        { event: event._id },
+        ...(event.booking ? [{ event: event.booking }] : []),
+      ],
+      status: { $nin: ["CANCELLED", "REJECTED"] },
+    });
+
+    const io = typeof getIO === "function" ? getIO() : null;
+    if (io) {
+      const payload = {
+        eventId: String(event._id),
+        bookingId: event.booking ? String(event.booking) : null,
+        eventName: event.eventName,
+        status: "IN_PROGRESS",
+        startedAt: now,
+        managerName,
+      };
+
+      // Broadcast to specific event room and general channels
+      io.to(`event:${event._id}`).emit("event:started", payload);
+      if (event.booking) {
+        io.to(`event:${event.booking}`).emit("event:started", payload);
+      }
+      io.emit("event:started", payload);
+      io.emit("duty:refresh", payload);
+
+      // Notify individual staff rooms
+      associatedDuties.forEach((duty) => {
+        if (duty.staff) {
+          io.to(`staff:${duty.staff}`).emit("event:started", payload);
+          io.to(`staff:${duty.staff}`).emit("duty:updated", {
+            dutyId: String(duty._id),
+            eventId: String(event._id),
+            status: duty.status,
+            eventStatus: "IN_PROGRESS",
+            canCheckIn: true,
+          });
+        }
+      });
+    }
+  } catch (socketErr) {
+    console.warn("Non-fatal Socket.IO broadcast warning in startEvent:", socketErr.message);
   }
 
   return getEventById(event._id);
