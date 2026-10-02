@@ -68,8 +68,37 @@ const changeMyPassword = async (req, res, next) => {
   }
 };
 
+/**
+ * Upload avatar for current user
+ * POST /api/users/me/avatar
+ */
+const uploadMyAvatar = async (req, res, next) => {
+  try {
+    if (!req.file) {
+      const error = new Error("Please select an image file to upload");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const avatarUrl = `/uploads/avatars/${req.file.filename}`;
+    const user = await userService.uploadMyAvatar(req.user.userId, avatarUrl);
+
+    res.status(200).json({
+      success: true,
+      message: "Avatar uploaded successfully",
+      data: {
+        avatarUrl,
+        user,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getMyProfile,
   updateMyProfile,
+  uploadMyAvatar,
   changeMyPassword,
 };

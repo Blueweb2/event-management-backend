@@ -1,6 +1,6 @@
 const bcrypt = require("bcryptjs");
-
 const User = require("../models/user.model");
+const { deleteAvatarFile } = require("../utils/avatar.util");
 
 /**
  * Create a new staff account
@@ -10,6 +10,7 @@ const createStaff = async ({
   username,
   email,
   password,
+  avatar = "",
   phone = "",
   location = "",
   employmentType = "full-time",
@@ -108,6 +109,7 @@ const createStaff = async ({
 
     phone: phone?.trim() || "",
     location: location?.trim() || "",
+    avatar: avatar?.trim() || "",
 
     employmentType,
 
@@ -260,6 +262,7 @@ const updateStaff = async (
     name,
     username,
     email,
+    avatar,
     phone,
     location,
     employmentType,
@@ -468,7 +471,45 @@ const updateStaff = async (
     };
   }
 
+  let oldAvatar = null;
+  if (avatar !== undefined) {
+    const newAvatar = String(avatar).trim();
+    oldAvatar = staff.avatar;
+    staff.avatar = newAvatar;
+  }
+
   await staff.save();
+
+  if (oldAvatar && oldAvatar !== staff.avatar) {
+    deleteAvatarFile(oldAvatar);
+  }
+
+  return formatStaff(staff);
+};
+
+/**
+ * Upload and update staff avatar
+ */
+const uploadStaffAvatar = async (staffId, avatarUrl) => {
+  const staff = await User.findOne({
+    _id: staffId,
+    role: "staff",
+  });
+
+  if (!staff) {
+    const error = new Error("Staff member not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const oldAvatar = staff.avatar;
+  const newAvatar = String(avatarUrl).trim();
+  staff.avatar = newAvatar;
+  await staff.save();
+
+  if (oldAvatar && oldAvatar !== newAvatar) {
+    deleteAvatarFile(oldAvatar);
+  }
 
   return formatStaff(staff);
 };
@@ -560,6 +601,7 @@ const formatStaff = (staff) => {
     name: staff.name,
     username: staff.username,
     email: staff.email,
+    avatar: staff.avatar || "",
     phone: staff.phone || "",
     location: staff.location || "",
 
@@ -607,6 +649,7 @@ module.exports = {
   getStaff,
   getStaffById,
   updateStaff,
+  uploadStaffAvatar,
   updateStaffStatus,
   resetStaffPassword,
 };

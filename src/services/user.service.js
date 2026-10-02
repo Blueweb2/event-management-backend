@@ -1,5 +1,6 @@
 const bcrypt = require("bcryptjs");
 const User = require("../models/user.model");
+const { deleteAvatarFile } = require("../utils/avatar.util");
 
 /**
  * Get the currently authenticated user's profile
@@ -20,6 +21,7 @@ const getMyProfile = async (userId) => {
     department: user.department || "Event Operations",
     name: user.name,
     email: user.email,
+    avatar: user.avatar || "",
     phone: user.phone || "",
     location: user.location || "",
     employmentType: user.employmentType || "full-time",
@@ -34,7 +36,7 @@ const getMyProfile = async (userId) => {
  */
 const updateMyProfile = async (
   userId,
-  { name, phone, location }
+  { name, phone, location, avatar }
 ) => {
   const user = await User.findById(userId);
 
@@ -68,6 +70,15 @@ const updateMyProfile = async (
     user.location = location.trim();
   }
 
+  if (avatar !== undefined) {
+    const newAvatar = String(avatar).trim();
+    const oldAvatar = user.avatar;
+    user.avatar = newAvatar;
+    if (oldAvatar && oldAvatar !== newAvatar) {
+      deleteAvatarFile(oldAvatar);
+    }
+  }
+
   await user.save();
 
   return {
@@ -77,12 +88,38 @@ const updateMyProfile = async (
     department: user.department || "Event Operations",
     name: user.name,
     email: user.email,
+    avatar: user.avatar || "",
     phone: user.phone || "",
     location: user.location || "",
     employmentType: user.employmentType || "full-time",
     role: user.role,
     status: user.isActive ? "Active" : "Inactive",
     joinedDate: user.createdAt,
+  };
+};
+
+const uploadMyAvatar = async (userId, avatarUrl) => {
+  const user = await User.findById(userId);
+  if (!user) {
+    const error = new Error("User not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const oldAvatar = user.avatar;
+  const newAvatar = String(avatarUrl).trim();
+  user.avatar = newAvatar;
+  await user.save();
+
+  if (oldAvatar && oldAvatar !== newAvatar) {
+    deleteAvatarFile(oldAvatar);
+  }
+
+  return {
+    id: user._id,
+    name: user.name,
+    email: user.email,
+    avatar: user.avatar,
   };
 };
 
@@ -123,5 +160,6 @@ const changeMyPassword = async (
 module.exports = {
   getMyProfile,
   updateMyProfile,
+  uploadMyAvatar,
   changeMyPassword,
 };

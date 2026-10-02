@@ -51,6 +51,12 @@ const userSchema = new mongoose.Schema(
       maxlength: 150,
     },
 
+    avatar: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
     // ==========================================
     // EMPLOYEE INFORMATION
     // ==========================================

@@ -166,6 +166,7 @@ const updateStaff = async (
       employeeId,
       department,
       emergencyContact,
+      avatar,
     } = req.body;
 
     const staff =
@@ -181,6 +182,7 @@ const updateStaff = async (
           employeeId,
           department,
           emergencyContact,
+          avatar,
         }
       );
 
@@ -281,11 +283,40 @@ const resetStaffPassword = async (
   }
 };
 
+/**
+ * Upload avatar for staff member
+ * POST /api/users/staff/:id/avatar
+ */
+const uploadStaffAvatar = async (req, res, next) => {
+  try {
+    if (!req.file) {
+      const error = new Error("Please select an image file to upload");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const avatarUrl = `/uploads/avatars/${req.file.filename}`;
+    const staff = await staffService.uploadStaffAvatar(req.params.id, avatarUrl);
+
+    return res.status(200).json({
+      success: true,
+      message: "Staff photo updated successfully",
+      data: {
+        avatarUrl,
+        staff,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createStaff,
   getStaff,
   getStaffById,
   updateStaff,
+  uploadStaffAvatar,
   updateStaffStatus,
   resetStaffPassword,
 };
