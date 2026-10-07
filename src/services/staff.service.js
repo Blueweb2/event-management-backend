@@ -14,6 +14,9 @@ const createStaff = async ({
   phone = "",
   location = "",
   employmentType = "full-time",
+  salary = 0,
+  salaryType = "hourly",
+  hourlyRate = 0,
   employeeId,
   department = "",
   emergencyContact = {},
@@ -112,6 +115,10 @@ const createStaff = async ({
     avatar: avatar?.trim() || "",
 
     employmentType,
+
+    salary: Number(salary) || Number(hourlyRate) || 0,
+    salaryType: salaryType || "hourly",
+    hourlyRate: salaryType === "hourly" ? (Number(hourlyRate) || Number(salary) || 0) : (Number(hourlyRate) || 0),
 
     // Staff accounts created through this
     // service are ALWAYS staff.
@@ -266,6 +273,9 @@ const updateStaff = async (
     phone,
     location,
     employmentType,
+    salary,
+    salaryType,
+    hourlyRate,
     employeeId,
     department,
     emergencyContact,
@@ -414,6 +424,24 @@ const updateStaff = async (
 
     staff.employmentType =
       employmentType;
+  }
+
+  // ==========================================
+  // SALARY & COMPENSATION
+  // ==========================================
+
+  if (salary !== undefined) {
+    staff.salary = Math.max(0, Number(salary) || 0);
+  }
+
+  if (salaryType !== undefined) {
+    staff.salaryType = salaryType;
+  }
+
+  if (hourlyRate !== undefined) {
+    staff.hourlyRate = Math.max(0, Number(hourlyRate) || 0);
+  } else if (staff.salaryType === "hourly" && salary !== undefined) {
+    staff.hourlyRate = staff.salary;
   }
 
   if (department !== undefined) {
@@ -614,6 +642,10 @@ const formatStaff = (staff) => {
     employmentType:
       staff.employmentType ||
       "full-time",
+
+    salary: typeof staff.salary === "number" ? staff.salary : (typeof staff.hourlyRate === "number" ? staff.hourlyRate : 0),
+    salaryType: staff.salaryType || "hourly",
+    hourlyRate: typeof staff.hourlyRate === "number" ? staff.hourlyRate : (staff.salaryType === "hourly" && typeof staff.salary === "number" ? staff.salary : 0),
 
     role: staff.role,
 

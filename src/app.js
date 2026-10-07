@@ -19,6 +19,7 @@ const foodRoutes = require("./routes/food.routes");
 const expenseRoutes = require("./routes/expense.routes");
 const reportRoutes = require("./routes/report.routes");
 const departmentRoutes = require("./routes/department.routes");
+const stockRoutes = require("./routes/stock.routes");
 
 const notFound = require("./middlewares/notFound.middleware");
 const errorHandler = require("./middlewares/error.middleware");
@@ -33,9 +34,13 @@ app.use(
   })
 );
 
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(",").map((origin) => origin.trim()).filter(Boolean)
+  : true;
+
 app.use(
   cors({
-    origin: true,
+    origin: allowedOrigins,
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
@@ -108,6 +113,7 @@ app.use("/api/food", foodRoutes);
 app.use("/api/expenses", expenseRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/api/departments", departmentRoutes);
+app.use("/api/stock", stockRoutes);
 
 // 404 handler
 app.use(notFound);

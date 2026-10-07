@@ -133,9 +133,15 @@ const createAssignment = async ({
     throw error;
   }
 
-  // Calculate working hours & total salary for this shift
+  // Calculate working hours & total salary for this shift.
+  // Use staff profile's configured rate as default if not explicitly overridden.
+  const effectiveHourlyRate =
+    Number(hourlyRate) > 0
+      ? Number(hourlyRate)
+      : (staffMember.hourlyRate || staffMember.salary || 0);
+
   const { totalHours, totalAmount, hourlyRate: rate } =
-    computeDutyHoursAndAmount(startTime, endTime, hourlyRate);
+    computeDutyHoursAndAmount(startTime, endTime, effectiveHourlyRate);
 
   // ==========================================
   // CREATE DUTY

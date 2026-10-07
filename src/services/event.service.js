@@ -104,6 +104,89 @@ const createEvent = async ({
 };
 
 // ==========================================
+// Auto-Cancel Overdue Unstarted Events
+// ==========================================
+
+const autoCancelOverdueUnstartedEvents = async () => {
+  try {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    // Find all events where eventDate < today and event was never started or completed
+    const overdueUnstartedEvents = await Event.find({
+      eventDate: { $lt: todayStart },
+      status: {
+        $in: [
+          "Upcoming",
+          "CONFIRMED",
+          "READY_TO_START",
+          "upcoming",
+          "confirmed",
+          "ready_to_start",
+        ],
+      },
+      startedAt: null,
+      completedAt: null,
+    });
+
+    if (!overdueUnstartedEvents || overdueUnstartedEvents.length === 0) {
+      return 0;
+    }
+
+    const eventIds = overdueUnstartedEvents.map((e) => e._id);
+    const bookingIds = overdueUnstartedEvents
+      .map((e) => e.booking)
+      .filter(Boolean);
+
+    // Update matching events to CANCELLED
+    await Event.updateMany(
+      { _id: { $in: eventIds } },
+      {
+        $set: { status: "CANCELLED" },
+        $push: {
+          activities: {
+            action: "AUTO_CANCELLED",
+            description:
+              "Event auto-cancelled: Scheduled event date has passed without being started or completed.",
+            timestamp: new Date(),
+          },
+        },
+      }
+    );
+
+    // Also update associated Bookings
+    if (bookingIds.length > 0) {
+      await Booking.updateMany(
+        {
+          _id: { $in: bookingIds },
+          status: { $in: ["Confirmed", "Upcoming", "confirmed", "upcoming"] },
+        },
+        { $set: { status: "Cancelled" } }
+      );
+    }
+
+    // Cancel uncompleted staff duties for these events
+    try {
+      const Duty = require("../models/duty.model");
+      await Duty.updateMany(
+        {
+          event: { $in: eventIds },
+          status: { $in: ["ASSIGNED", "ACCEPTED", "IN_PROGRESS", "PENDING"] },
+        },
+        { $set: { status: "CANCELLED" } }
+      );
+    } catch (dutyErr) {
+      console.warn("Non-fatal duty cancellation warning:", dutyErr.message);
+    }
+
+    return overdueUnstartedEvents.length;
+  } catch (err) {
+    console.error("Error auto-cancelling overdue unstarted events:", err);
+    return 0;
+  }
+};
+
+// ==========================================
 // Get All Events
 // ==========================================
 
@@ -115,6 +198,9 @@ const getEvents = async ({
   page = 1,
   limit = 20,
 } = {}) => {
+  // Automatically cancel overdue events that were never started or completed
+  await autoCancelOverdueUnstartedEvents();
+
   const query = {};
 
   // ==========================================
@@ -295,6 +381,36 @@ const getEventById = async (eventId) => {
     const error = new Error("Event not found");
     error.statusCode = 404;
     throw error;
+  }
+
+  // If the event date is in the past and it was never started or completed, auto-cancel it
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const isUnstarted = [
+    "Upcoming",
+    "CONFIRMED",
+    "READY_TO_START",
+    "upcoming",
+    "confirmed",
+    "ready_to_start",
+  ].includes(event.status);
+
+  if (
+    event.eventDate &&
+    new Date(event.eventDate) < todayStart &&
+    isUnstarted &&
+    !event.startedAt &&
+    !event.completedAt
+  ) {
+    event.status = "CANCELLED";
+    if (!Array.isArray(event.activities)) event.activities = [];
+    event.activities.push({
+      action: "AUTO_CANCELLED",
+      description:
+        "Event auto-cancelled: Scheduled event date has passed without being started or completed.",
+      timestamp: new Date(),
+    });
+    await event.save();
   }
 
   return event;
@@ -673,6 +789,22 @@ const startEvent = async (eventId, managerId) => {
     throw error;
   }
 
+  if (!isToday && todayStr > eventDateStr) {
+    event.status = "CANCELLED";
+    if (!Array.isArray(event.activities)) event.activities = [];
+    event.activities.push({
+      action: "AUTO_CANCELLED",
+      description: "Event cancelled: Scheduled event date has already passed without being started.",
+      timestamp: now,
+      performedBy: managerId || null,
+    });
+    await event.save();
+
+    const error = new Error("Cannot start this event because its scheduled date has passed. The event has been marked as Cancelled.");
+    error.statusCode = 400;
+    throw error;
+  }
+
   // Find manager details for activity log
   let managerName = "Manager";
   if (managerId) {
@@ -802,4 +934,5 @@ module.exports = {
   startEvent,
   cancelEvent,
   deleteEvent,
+  autoCancelOverdueUnstartedEvents,
 };

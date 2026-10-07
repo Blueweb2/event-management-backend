@@ -92,6 +92,28 @@ const userSchema = new mongoose.Schema(
     },
 
     // ==========================================
+    // SALARY & COMPENSATION
+    // ==========================================
+
+    salary: {
+      type: Number,
+      default: 0,
+      min: [0, "Salary cannot be negative"],
+    },
+
+    salaryType: {
+      type: String,
+      enum: ["hourly", "daily", "monthly", "per_event"],
+      default: "hourly",
+    },
+
+    hourlyRate: {
+      type: Number,
+      default: 0,
+      min: [0, "Hourly rate cannot be negative"],
+    },
+
+    // ==========================================
     // ROLE
     // ==========================================
 
