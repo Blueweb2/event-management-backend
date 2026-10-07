@@ -256,6 +256,10 @@ const createEstimateController = async (
           message:
             client.message?.trim() ||
             "",
+
+          referralSource:
+            client.referralSource?.trim() ||
+            "",
         },
 
         // ------------------------------------

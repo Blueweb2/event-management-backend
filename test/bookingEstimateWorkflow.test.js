@@ -36,6 +36,7 @@ test.describe("Booking & Estimate Management Workflow & RBAC Security Suite", ()
   let adminToken;
   let staffToken;
   let testService;
+  let testPerGuestService;
   const createdEstimateIds = [];
   const createdBookingIds = [];
   const createdEventIds = [];
@@ -88,13 +89,21 @@ test.describe("Booking & Estimate Management Workflow & RBAC Security Suite", ()
     });
     staffToken = generateToken(testStaff);
 
-    // Create a dummy service for estimate items
+    // Create dummy services for estimate items
     testService = await Service.create({
       name: `Grand Photography ${ts}`,
       category: "Photography",
       pricingType: "FIXED",
       basePrice: 15000,
       description: "Complete professional coverage",
+    });
+
+    testPerGuestService = await Service.create({
+      name: `Catering Dinner Service ${ts}`,
+      category: "Catering",
+      pricingType: "PER_GUEST",
+      basePrice: 500,
+      description: "Per guest dinner coverage",
     });
   });
 
@@ -108,6 +117,7 @@ test.describe("Booking & Estimate Management Workflow & RBAC Security Suite", ()
     if (testAdmin) await User.findByIdAndDelete(testAdmin._id);
     if (testStaff) await User.findByIdAndDelete(testStaff._id);
     if (testService) await Service.findByIdAndDelete(testService._id);
+    if (testPerGuestService) await Service.findByIdAndDelete(testPerGuestService._id);
 
     if (createdEstimateIds.length) {
       await Estimate.deleteMany({ _id: { $in: createdEstimateIds } });
@@ -424,5 +434,226 @@ test.describe("Booking & Estimate Management Workflow & RBAC Security Suite", ()
     // Verify exactly 1 Event exists for this estimate
     const count = await Event.countDocuments({ booking: convertBody1.data.booking._id });
     assert.strictEqual(count, 1, "Exactly one event must exist for the converted booking");
+  });
+
+  test("6. Comprehensive 5-Step Functional Calculation: Food + Fixed + PerGuest Services + Custom Lead Source + Discount + Tax", async () => {
+    const guests = 100;
+    const foodItems = [
+      {
+        name: "Welcome Mocktail",
+        category: "Welcome Drinks",
+        dietary: "veg",
+        rate: 50,
+        quantity: 100,
+      },
+      {
+        name: "Paneer Tikka Starter",
+        category: "Starters / Appetizers",
+        dietary: "veg",
+        rate: 150,
+        quantity: 100,
+      },
+    ];
+
+    const payload = {
+      eventName: "Calculated Grand Gala",
+      eventType: "Corporate",
+      eventDate: new Date(Date.now() + 86400000 * 30).toISOString(),
+      eventTime: "19:00",
+      guests,
+      location: "Grand Ball Room",
+      description: "Full end-to-end calculation audit",
+      client: {
+        name: "Enterprise Client",
+        phone: "9876543210",
+        email: "enterprise@example.com",
+        message: "VIP setup required",
+        referralSource: "Friend / Referral (Mr. Sharma)",
+      },
+      services: [
+        {
+          serviceId: testService._id.toString(), // Fixed 15,000
+          quantity: 1,
+        },
+        {
+          serviceId: testPerGuestService._id.toString(), // Per guest: 500 * 100 = 50,000
+          quantity: guests,
+        },
+      ],
+      foodMenu: {
+        included: true,
+        items: foodItems, // 5,000 + 15,000 = 20,000
+      },
+      discountType: "percentage",
+      discountValue: 10, // 10% discount
+      additionalCharges: 2500,
+    };
+
+    const res = await fetch(`${baseUrl}/estimates`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${managerToken}`,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    assert.strictEqual(res.status, 201, `Estimate creation should return 201, got ${res.status}`);
+    const body = await res.json();
+    assert.strictEqual(body.success, true);
+    const est = body.data;
+    createdEstimateIds.push(est._id);
+
+    // Verify Mathematical Invariants
+    // Services Subtotal = 15,000 (fixed) + 50,000 (per guest) = 65,000
+    // Food Subtotal = 50 * 100 + 150 * 100 = 20,000
+    // Total Subtotal = 85,000
+    assert.strictEqual(est.subtotal, 85000, `Expected subtotal 85000, got ${est.subtotal}`);
+
+    // Discount = 10% of 85,000 = 8,500
+    assert.strictEqual(est.discount, 8500, `Expected discount 8500, got ${est.discount}`);
+
+    // Taxable Amount = 85,000 - 8,500 = 76,500
+    // GST (18%) = 76,500 * 0.18 = 13,770
+    assert.strictEqual(est.gstAmount, 13770, `Expected GST 13770, got ${est.gstAmount}`);
+
+    // Additional Charges = 2,500
+    assert.strictEqual(est.additionalCharges, 2500, `Expected additional charges 2500, got ${est.additionalCharges}`);
+
+    // Grand Total = 76,500 + 13,770 + 2,500 = 92,770
+    assert.strictEqual(est.total, 92770, `Expected grand total 92770, got ${est.total}`);
+
+    // Verify Client Lead Source Persistence
+    assert.strictEqual(
+      est.client.referralSource,
+      "Friend / Referral (Mr. Sharma)",
+      "Lead / Inquiry Source must persist accurately in estimate client subdocument"
+    );
+  });
+
+  test("7. Validation & Rejection of Malformed / Invalid Inputs", async () => {
+    // 1. Missing Event Name
+    const resNoName = await fetch(`${baseUrl}/estimates`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${managerToken}` },
+      body: JSON.stringify({
+        eventName: "",
+        eventType: "Wedding",
+        eventDate: new Date().toISOString(),
+        eventTime: "18:00",
+        guests: 100,
+        location: "Hall A",
+        description: "Test",
+        client: { name: "Client", phone: "1234567890", email: "test@example.com" },
+        services: [{ serviceId: testService._id.toString() }],
+      }),
+    });
+    assert.strictEqual(resNoName.status, 400, "Missing eventName must return 400");
+
+    // 2. Negative / 0 Guest Count
+    const resInvalidGuests = await fetch(`${baseUrl}/estimates`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${managerToken}` },
+      body: JSON.stringify({
+        eventName: "Invalid Guests Event",
+        eventType: "Wedding",
+        eventDate: new Date().toISOString(),
+        eventTime: "18:00",
+        guests: -10,
+        location: "Hall A",
+        description: "Test",
+        client: { name: "Client", phone: "1234567890", email: "test@example.com" },
+        services: [{ serviceId: testService._id.toString() }],
+      }),
+    });
+    assert.strictEqual(resInvalidGuests.status, 400, "Negative guest count must return 400");
+
+    // 3. Missing Client Details
+    const resMissingClient = await fetch(`${baseUrl}/estimates`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${managerToken}` },
+      body: JSON.stringify({
+        eventName: "Missing Client Event",
+        eventType: "Wedding",
+        eventDate: new Date().toISOString(),
+        eventTime: "18:00",
+        guests: 50,
+        location: "Hall A",
+        description: "Test",
+        client: { name: "", phone: "", email: "" },
+        services: [{ serviceId: testService._id.toString() }],
+      }),
+    });
+    assert.strictEqual(resMissingClient.status, 400, "Missing client info must return 400");
+
+    // 4. Empty Services Array
+    const resEmptyServices = await fetch(`${baseUrl}/estimates`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${managerToken}` },
+      body: JSON.stringify({
+        eventName: "Empty Services Event",
+        eventType: "Wedding",
+        eventDate: new Date().toISOString(),
+        eventTime: "18:00",
+        guests: 50,
+        location: "Hall A",
+        description: "Test",
+        client: { name: "Client", phone: "1234567890", email: "test@example.com" },
+        services: [],
+      }),
+    });
+    assert.strictEqual(resEmptyServices.status, 400, "Empty services array must return 400");
+  });
+
+  test("8. Fixed Discount & Invariant Verification between Preview & Backend", async () => {
+    const payload = {
+      eventName: "Fixed Discount Test",
+      eventType: "Birthday",
+      eventDate: new Date(Date.now() + 86400000 * 5).toISOString(),
+      eventTime: "14:00",
+      guests: 50,
+      location: "Party Hall",
+      description: "Fixed discount verification",
+      client: {
+        name: "Fixed Client",
+        phone: "9123456780",
+        email: "fixed@example.com",
+        referralSource: "Social Media",
+      },
+      services: [
+        {
+          serviceId: testService._id.toString(), // 15,000
+          quantity: 1,
+        },
+      ],
+      discountType: "fixed",
+      discountValue: 5000,
+      additionalCharges: 1200,
+    };
+
+    const res = await fetch(`${baseUrl}/estimates`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${managerToken}`,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    assert.strictEqual(res.status, 201);
+    const body = await res.json();
+    const est = body.data;
+    createdEstimateIds.push(est._id);
+
+    // Subtotal = 15,000
+    assert.strictEqual(est.subtotal, 15000);
+    // Fixed Discount = 5,000
+    assert.strictEqual(est.discount, 5000);
+    // Taxable = 10,000 -> GST (18%) = 1,800
+    assert.strictEqual(est.gstAmount, 1800);
+    // Additional = 1,200
+    assert.strictEqual(est.additionalCharges, 1200);
+    // Total = 10,000 + 1,800 + 1,200 = 13,000
+    assert.strictEqual(est.total, 13000);
   });
 });
