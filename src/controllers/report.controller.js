@@ -15,7 +15,7 @@ const getDashboardAnalytics = async (req, res, next) => {
     const revenueAggregation = await Booking.aggregate([
       {
         $match: {
-          status: { $in: ["Confirmed", "Completed"] },
+          status: { $in: ["Confirmed", "Completed", "CONFIRMED", "COMPLETED", "Invoiced", "Settled"] },
         },
       },
       {
@@ -31,7 +31,7 @@ const getDashboardAnalytics = async (req, res, next) => {
     // 2. Upcoming Events Volume
     const upcomingEventsVolume = await Event.countDocuments({
       eventDate: { $gte: today },
-      status: { $ne: "Cancelled" },
+      status: { $nin: ["Cancelled", "CANCELLED", "cancelled"] },
     });
 
     // 3. Staff Hours Worked
@@ -45,19 +45,42 @@ const getDashboardAnalytics = async (req, res, next) => {
       },
       {
         $project: {
-          durationMillis: { $subtract: ["$checkOut", "$checkIn"] },
+          computedHours: {
+            $cond: [
+              { $gt: ["$totalHours", 0] },
+              "$totalHours",
+              {
+                $divide: [
+                  {
+                    $max: [
+                      0,
+                      {
+                        $subtract: [
+                          { $subtract: ["$checkOut", "$checkIn"] },
+                          { $multiply: [{ $ifNull: ["$totalPauseMinutes", 0] }, 60000] },
+                        ],
+                      },
+                    ],
+                  },
+                  3600000,
+                ],
+              },
+            ],
+          },
         },
       },
       {
         $group: {
           _id: null,
-          totalMillis: { $sum: "$durationMillis" },
+          totalStaffHours: { $sum: "$computedHours" },
         },
       },
     ]);
 
-    const totalMillis = staffHoursAggregation.length > 0 ? staffHoursAggregation[0].totalMillis : 0;
-    const totalStaffHours = Math.round(totalMillis / (1000 * 60 * 60)); // Convert to hours and round
+    const totalStaffHours =
+      staffHoursAggregation.length > 0
+        ? Math.round(staffHoursAggregation[0].totalStaffHours * 10) / 10
+        : 0;
 
     res.status(200).json({
       success: true,

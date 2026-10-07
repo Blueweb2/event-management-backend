@@ -16,47 +16,57 @@ async function seed() {
 
     console.log("Checking seed users...");
 
+    const isProduction = process.env.NODE_ENV === "production";
+    const adminEmail = process.env.ADMIN_EMAIL || "admin@eventmanagement.com";
+    const adminPassword = process.env.ADMIN_PASSWORD || (isProduction ? null : "admin123");
+
+    if (isProduction && !process.env.ADMIN_PASSWORD) {
+      console.warn("⚠️ Production Notice: ADMIN_PASSWORD environment variable not set. Skipping automatic admin provisioning.");
+    }
+
     // 1. Seed Admin/Manager
-    let admin = await User.findOne({ email: "admin@eventmanagement.com" });
-    if (!admin) {
-      const hashedAdminPassword = await bcrypt.hash("admin123", 12);
+    let admin = await User.findOne({ email: adminEmail });
+    if (!admin && adminPassword) {
+      const hashedAdminPassword = await bcrypt.hash(adminPassword, 12);
       admin = await User.create({
-        name: "Alex Morgan",
-        username: "admin_alex",
-        email: "admin@eventmanagement.com",
+        name: process.env.ADMIN_NAME || "Alex Morgan",
+        username: process.env.ADMIN_USERNAME || "admin_alex",
+        email: adminEmail,
         password: hashedAdminPassword,
         role: "admin",
-        phone: "+1 555 019 2831",
+        phone: process.env.ADMIN_PHONE || "+1 555 019 2831",
         location: "New York, USA",
         department: "Management",
         employmentType: "full-time",
         isActive: true,
       });
-      console.log("Created default manager: admin@eventmanagement.com / admin123");
-    } else {
-      console.log("Manager already exists: admin@eventmanagement.com");
+      console.log(`Created administrator account: ${adminEmail}`);
+    } else if (admin) {
+      console.log(`Administrator already exists: ${adminEmail}`);
     }
 
-    // 2. Seed Staff
-    let staff = await User.findOne({ email: "staff@eventmanagement.com" });
-    if (!staff) {
-      const hashedStaffPassword = await bcrypt.hash("staff123", 12);
-      staff = await User.create({
-        name: "Arun Kumar",
-        username: "arun_staff",
-        email: "staff@eventmanagement.com",
-        password: hashedStaffPassword,
-        role: "staff",
-        phone: "+1 555 019 4482",
-        location: "Brooklyn, NY",
-        department: "Event Production",
-        employmentType: "full-time",
-        isActive: true,
-        createdBy: admin._id,
-      });
-      console.log("Created default staff: staff@eventmanagement.com / staff123");
-    } else {
-      console.log("Staff already exists: staff@eventmanagement.com");
+    // 2. Seed Staff (development/testing only unless explicitly configured)
+    if (!isProduction) {
+      let staff = await User.findOne({ email: "staff@eventmanagement.com" });
+      if (!staff) {
+        const hashedStaffPassword = await bcrypt.hash("staff123", 12);
+        staff = await User.create({
+          name: "Arun Kumar",
+          username: "arun_staff",
+          email: "staff@eventmanagement.com",
+          password: hashedStaffPassword,
+          role: "staff",
+          phone: "+1 555 019 4482",
+          location: "Brooklyn, NY",
+          department: "Event Production",
+          employmentType: "full-time",
+          isActive: true,
+          createdBy: admin?._id || null,
+        });
+        console.log("Created demo staff account: staff@eventmanagement.com");
+      } else {
+        console.log("Staff already exists: staff@eventmanagement.com");
+      }
     }
 
     // 3. Seed Services if empty
