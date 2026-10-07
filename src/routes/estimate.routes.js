@@ -16,10 +16,15 @@ const router = express.Router();
 // ==========================================
 // CREATE ESTIMATE
 // POST /api/estimates
-// Public — booking form submits without auth
+// Manager only — protected route
 // ==========================================
 
-router.post("/", createEstimateController);
+router.post(
+  "/",
+  authenticate,
+  authorize("admin", "manager"),
+  createEstimateController
+);
 
 // ==========================================
 // GET ALL ESTIMATES

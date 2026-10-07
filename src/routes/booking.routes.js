@@ -15,10 +15,11 @@ const router = express.Router();
 // Booking Routes
 // ==========================================
 
-// Create booking
-// Public booking form can submit a booking
+// Create booking (Manager only)
 router.post(
   "/",
+  authenticate,
+  authorize("admin", "manager"),
   createBooking
 );
 
