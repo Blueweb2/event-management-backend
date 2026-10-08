@@ -179,6 +179,33 @@ const getStaffAssignedStock = async (req, res, next) => {
   }
 };
 
+const holdStock = async (req, res, next) => {
+  try {
+    const result = await stockService.holdStock(req.body, req.user);
+    res.status(201).json({
+      success: true,
+      message: "Stock successfully held and email notification sent to manager",
+      data: result.allocation,
+      movement: result.movement,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const releaseStockHold = async (req, res, next) => {
+  try {
+    const result = await stockService.releaseStockHold(req.params.eventStockId, req.user);
+    res.status(200).json({
+      success: true,
+      message: "Stock hold released back to available inventory",
+      data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const takeStock = async (req, res, next) => {
   try {
     const result = await stockService.takeStock(req.params.eventStockId, req.body, req.user);
@@ -298,6 +325,8 @@ module.exports = {
   assignStaffToStock,
   removeEventStockRequirement,
   getStaffAssignedStock,
+  holdStock,
+  releaseStockHold,
   takeStock,
   returnStock,
   verifyStockReturn,

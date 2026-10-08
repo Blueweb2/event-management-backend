@@ -720,7 +720,10 @@ const takeStock = async (eventStockId, { takenQuantity, takeNotes, expectedRetur
     const prevAvailable = stockItem.availableQuantity;
     const prevTotal = stockItem.totalQuantity;
 
-    const reservedForThis = allocation.reservedQuantity || allocation.requiredQuantity;
+    const reservedForThis = typeof allocation.reservedQuantity === "number" && allocation.reservedQuantity > 0
+      ? allocation.reservedQuantity
+      : 0;
+
     stockItem.reservedQuantity = Math.max(0, stockItem.reservedQuantity - reservedForThis);
     stockItem.inUseQuantity += actualTaken;
 
@@ -744,6 +747,7 @@ const takeStock = async (eventStockId, { takenQuantity, takeNotes, expectedRetur
 
     // Update allocation
     allocation.takenQuantity = actualTaken;
+    allocation.reservedQuantity = 0;
     allocation.status = "TAKEN_BY_STAFF";
     allocation.takenAt = new Date();
     if (expectedReturnAt) {
@@ -926,8 +930,201 @@ const returnStock = async (
       .populate("assignedStaff", "name email role phone")
       .populate("assignedBy", "name email");
 
+    const { sendStockReturnNotificationToManager } = require("../utils/notification.util");
+    const staffUser = await User.findById(user.userId || user._id).session(session);
+    await sendStockReturnNotificationToManager({
+      staff: staffUser,
+      stockItem: populated?.stockItem || allocation.stockItem,
+      returnedQuantity: retQty,
+      damagedQuantity: dmgQty,
+      lostQuantity: lstQty,
+      notes: returnNotes,
+    });
+
     emitStockEvent("stock:returnSubmitted", { allocation: populated, movement });
     return { allocation: populated, movement };
+  });
+};
+
+/**
+ * ==========================================
+ * STAFF HOLD / RESERVE STOCK FROM INVENTORY
+ * ==========================================
+ */
+
+const holdStock = async ({ stockItemId, quantity, eventId, notes, expectedReturnAt }, user) => {
+  const qty = validatePositiveInteger(quantity, "Hold quantity");
+
+  return await runInTransaction(async (session) => {
+    const stockItem = await StockItem.findById(stockItemId).session(session);
+    if (!stockItem) {
+      const error = new Error("Stock item not found");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    if (stockItem.availableQuantity < qty) {
+      const error = new Error(
+        `Insufficient available stock for ${stockItem.name}. Available: ${stockItem.availableQuantity} ${stockItem.unit || "units"}, Requested hold: ${qty} ${stockItem.unit || "units"}`
+      );
+      error.statusCode = 400;
+      throw error;
+    }
+
+    let eventDoc = null;
+    if (eventId && mongoose.Types.ObjectId.isValid(eventId)) {
+      eventDoc = await Event.findById(eventId).session(session);
+    }
+
+    const staffUser = await User.findById(user.userId || user._id).session(session);
+
+    // Atomically reserve stock in inventory
+    const prevAvailable = stockItem.availableQuantity;
+    stockItem.availableQuantity -= qty;
+    stockItem.reservedQuantity += qty;
+    stockItem.updatedBy = user.userId || user._id;
+    await stockItem.save({ session });
+
+    // Create EventStock allocation for the staff
+    const createdAllocations = await EventStock.create(
+      [
+        {
+          event: eventDoc ? eventDoc._id : null,
+          booking: eventDoc?.booking || null,
+          stockItem: stockItemId,
+          requiredQuantity: qty,
+          reservedQuantity: qty,
+          assignedStaff: user.userId || user._id,
+          status: "READY_FOR_COLLECTION",
+          assignedBy: user.userId || user._id,
+          assignedAt: new Date(),
+          expectedReturnAt: expectedReturnAt ? new Date(expectedReturnAt) : null,
+          takeNotes: (notes || "").trim(),
+        },
+      ],
+      { session }
+    );
+    const allocation = createdAllocations[0];
+
+    // Create StockMovement record
+    const movement = await StockMovement.create(
+      [
+        {
+          event: eventDoc ? eventDoc._id : null,
+          booking: eventDoc?.booking || null,
+          stockItem: stockItemId,
+          eventStock: allocation._id,
+          assignedStaff: user.userId || user._id,
+          expectedQuantity: qty,
+          expectedReturnAt: expectedReturnAt ? new Date(expectedReturnAt) : null,
+          takeNotes: (notes || "").trim(),
+          status: "ASSIGNED",
+        },
+      ],
+      { session }
+    );
+
+    // Audit log
+    await StockTransaction.create(
+      [
+        {
+          stockItem: stockItem._id,
+          event: eventDoc ? eventDoc._id : null,
+          type: "RESERVED",
+          quantity: qty,
+          previousAvailable: prevAvailable,
+          newAvailable: stockItem.availableQuantity,
+          previousTotal: stockItem.totalQuantity,
+          newTotal: stockItem.totalQuantity,
+          performedBy: user.userId || user._id,
+          notes: `Staff ${staffUser?.name || "Staff"} placed a hold on ${qty} ${stockItem.unit || "units"}. Notes: ${notes || "None"}`,
+        },
+      ],
+      { session }
+    );
+
+    const populated = await EventStock.findById(allocation._id, null, session ? { session } : {})
+      .populate("stockItem")
+      .populate("assignedStaff", "name email role phone")
+      .populate("event", "eventName eventDate location");
+
+    // Trigger email notification to manager
+    const { sendStockHoldNotificationToManager } = require("../utils/notification.util");
+    await sendStockHoldNotificationToManager({
+      staff: staffUser,
+      stockItem,
+      quantity: qty,
+      event: eventDoc,
+      notes,
+      expectedDate: expectedReturnAt,
+    });
+
+    emitStockEvent("stock:held", { allocation: populated, stockItem });
+    emitStockEvent("stock:itemUpdated", stockItem);
+
+    return { allocation: populated, movement: movement[0] };
+  });
+};
+
+const releaseStockHold = async (eventStockId, user) => {
+  return await runInTransaction(async (session) => {
+    const allocation = await EventStock.findById(eventStockId).session(session).populate("stockItem");
+    if (!allocation) {
+      const error = new Error("Stock hold allocation record not found");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    if (user.role !== "manager" && user.role !== "admin") {
+      const assignedId = String(allocation.assignedStaff?._id || allocation.assignedStaff || "");
+      const currentUserId = String(user.userId || user._id || "");
+      if (assignedId !== currentUserId) {
+        const error = new Error("You are not authorized to release another staff member's hold");
+        error.statusCode = 403;
+        throw error;
+      }
+    }
+
+    if (allocation.status !== "READY_FOR_COLLECTION" && allocation.status !== "RESERVED" && allocation.status !== "PLANNED") {
+      const error = new Error(`Cannot release hold on stock with status "${allocation.status}". Only uncollected holds can be released.`);
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const stockItem = await StockItem.findById(allocation.stockItem._id || allocation.stockItem).session(session);
+    if (stockItem && allocation.reservedQuantity > 0) {
+      const prevAvailable = stockItem.availableQuantity;
+      stockItem.reservedQuantity = Math.max(0, stockItem.reservedQuantity - allocation.reservedQuantity);
+      stockItem.availableQuantity += allocation.reservedQuantity;
+      stockItem.updatedBy = user.userId || user._id;
+      await stockItem.save({ session });
+
+      await StockTransaction.create(
+        [
+          {
+            stockItem: stockItem._id,
+            event: allocation.event || null,
+            type: "UNRESERVED",
+            quantity: allocation.reservedQuantity,
+            previousAvailable: prevAvailable,
+            newAvailable: stockItem.availableQuantity,
+            previousTotal: stockItem.totalQuantity,
+            newTotal: stockItem.totalQuantity,
+            performedBy: user.userId || user._id,
+            notes: `Staff hold of ${allocation.reservedQuantity} ${stockItem.unit || "units"} released back to available warehouse inventory.`,
+          },
+        ],
+        { session }
+      );
+    }
+
+    await StockMovement.deleteMany({ eventStock: allocation._id, status: "ASSIGNED" }).session(session);
+    await EventStock.findByIdAndDelete(allocation._id).session(session);
+
+    emitStockEvent("stock:holdReleased", { eventStockId: allocation._id, stockItem });
+    if (stockItem) emitStockEvent("stock:itemUpdated", stockItem);
+
+    return { success: true };
   });
 };
 
@@ -1324,6 +1521,8 @@ module.exports = {
   assignStaffToStock,
   removeEventStockRequirement,
   getStaffAssignedStock,
+  holdStock,
+  releaseStockHold,
   takeStock,
   returnStock,
   verifyStockReturn,

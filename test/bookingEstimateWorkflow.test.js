@@ -135,6 +135,26 @@ test.describe("Booking & Estimate Management Workflow & RBAC Security Suite", ()
     await mongoose.disconnect();
   });
 
+  test("0. Health & Readiness Check: Verify GET /api/health and GET /health return HTTP 200 with server status & database readiness", async () => {
+    const apiHealthRes = await fetch(`${baseUrl}/health`);
+    assert.strictEqual(apiHealthRes.status, 200, "GET /api/health must return HTTP 200");
+    const apiHealthData = await apiHealthRes.json();
+    assert.strictEqual(apiHealthData.success, true);
+    assert.strictEqual(apiHealthData.status, "healthy");
+    assert.strictEqual(apiHealthData.database.ready, true);
+    assert.strictEqual(apiHealthData.database.status, "connected");
+
+    const rootUrl = baseUrl.replace(/\/api$/, "");
+    const rootHealthRes = await fetch(`${rootUrl}/health`);
+    assert.strictEqual(rootHealthRes.status, 200, "GET /health must return HTTP 200");
+
+    const rootRes = await fetch(`${rootUrl}/`);
+    assert.strictEqual(rootRes.status, 200, "GET / must return HTTP 200");
+    const rootData = await rootRes.json();
+    assert.strictEqual(rootData.success, true);
+    assert.strictEqual(rootData.healthCheck, "/api/health");
+  });
+
   test("1. Security: Reject unauthenticated requests to POST /api/estimates and POST /api/bookings with HTTP 401", async () => {
     // Attempt to create estimate without authorization header
     const estRes = await fetch(`${baseUrl}/estimates`, {

@@ -5,7 +5,7 @@ const eventStockSchema = new mongoose.Schema(
     event: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Event",
-      required: [true, "Event is required"],
+      default: null,
     },
     booking: {
       type: mongoose.Schema.Types.ObjectId,

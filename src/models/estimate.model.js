@@ -537,7 +537,7 @@ const estimateSchema = new mongoose.Schema(
 
     expiresAt: {
       type: Date,
-      default: null,
+      default: () => new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     },
   },
   {
@@ -568,6 +568,9 @@ estimateSchema.index({
 estimateSchema.index({
   createdAt: -1,
 });
+
+// Auto-delete expired drafts after 7 days via MongoDB TTL
+estimateSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 // ==========================================
 // Model

@@ -559,4 +559,129 @@ test.describe("Stock & Equipment Reconciliation and Inventory Module (Production
     assert.ok(verifiedTx.performedBy, "Audit transaction contains performedBy actor");
     assert.ok(verifiedTx.notes.includes("Manager"), "Audit transaction contains manager notes");
   });
+
+  test("8. Integration: General Operational Stock Hold without Event (event: null) & Release Hold", async () => {
+    // Master inventory before hold
+    const itemBefore = await StockItem.findById(testStockItem._id);
+    const startAvailable = itemBefore.availableQuantity;
+    const startReserved = itemBefore.reservedQuantity;
+
+    // Staff holds 5 units for general operations (no event ID)
+    const holdRes = await stockService.holdStock(
+      {
+        stockItemId: testStockItem._id,
+        quantity: 5,
+        eventId: null,
+        notes: "General banquet glassware standby",
+        expectedReturnAt: new Date(Date.now() + 86400000).toISOString(),
+      },
+      { userId: testStaff._id, role: "staff" }
+    );
+
+    assert.ok(holdRes.allocation, "Hold allocation created");
+    assert.equal(holdRes.allocation.event, null, "Event is null for general operational hold");
+    assert.equal(holdRes.allocation.requiredQuantity, 5);
+    assert.equal(holdRes.allocation.reservedQuantity, 5);
+    assert.equal(holdRes.allocation.status, "READY_FOR_COLLECTION");
+
+    const itemAfterHold = await StockItem.findById(testStockItem._id);
+    assert.equal(itemAfterHold.availableQuantity, startAvailable - 5, "Available quantity decremented by 5");
+    assert.equal(itemAfterHold.reservedQuantity, startReserved + 5, "Reserved quantity incremented by 5");
+
+    // Staff releases the hold
+    const releaseRes = await stockService.releaseStockHold(holdRes.allocation._id, {
+      userId: testStaff._id,
+      role: "staff",
+    });
+
+    assert.equal(releaseRes.success, true);
+
+    const itemAfterRelease = await StockItem.findById(testStockItem._id);
+    assert.equal(itemAfterRelease.availableQuantity, startAvailable, "Available quantity restored after release");
+    assert.equal(itemAfterRelease.reservedQuantity, startReserved, "Reserved quantity restored after release");
+
+    // Ensure allocation is deleted
+    const checkAlloc = await EventStock.findById(holdRes.allocation._id);
+    assert.equal(checkAlloc, null, "Released allocation record is cleaned up");
+  });
+
+  test("9. Integration: Concurrent Stock Holds Cannot Over-Allocate Inventory", async () => {
+    // Create a limited stock item with only 10 available units
+    const limitedItem = await stockService.createStockItem(
+      {
+        name: "Limited High-End Projectors",
+        category: "Audio/Visual",
+        totalQuantity: 10,
+        unit: "Units",
+        minStockLevel: 2,
+      },
+      testManager._id
+    );
+
+    // 3 concurrent hold requests of 6 units each (total 18 requested > 10 available)
+    const holdAttempts = await Promise.allSettled([
+      stockService.holdStock(
+        { stockItemId: limitedItem._id, quantity: 6, notes: "Hold 1" },
+        { userId: testStaff._id, role: "staff" }
+      ),
+      stockService.holdStock(
+        { stockItemId: limitedItem._id, quantity: 6, notes: "Hold 2" },
+        { userId: testOtherStaff._id, role: "staff" }
+      ),
+      stockService.holdStock(
+        { stockItemId: limitedItem._id, quantity: 6, notes: "Hold 3" },
+        { userId: testStaff._id, role: "staff" }
+      ),
+    ]);
+
+    const fulfilled = holdAttempts.filter((r) => r.status === "fulfilled");
+    const rejected = holdAttempts.filter((r) => r.status === "rejected");
+
+    assert.equal(fulfilled.length, 1, "Exactly one concurrent hold of 6 units must succeed");
+    assert.equal(rejected.length, 2, "Other concurrent holds exceeding available stock must be rejected");
+
+    const updatedItem = await StockItem.findById(limitedItem._id);
+    assert.equal(updatedItem.availableQuantity, 4, "Remaining available stock must be exactly 4 (10 - 6)");
+    assert.equal(updatedItem.reservedQuantity, 6, "Reserved stock must be exactly 6");
+
+    // Cleanup
+    await EventStock.deleteMany({ stockItem: limitedItem._id });
+    await StockMovement.deleteMany({ stockItem: limitedItem._id });
+    await StockTransaction.deleteMany({ stockItem: limitedItem._id });
+    await StockItem.findByIdAndDelete(limitedItem._id);
+  });
+
+  test("10. Integration: Email Notification Resilience (Notification failure does NOT roll back stock transaction)", async () => {
+    const notificationUtil = require("../src/utils/notification.util");
+    const originalSender = notificationUtil.sendStockHoldNotificationToManager;
+
+    // Simulate notification error / rejection
+    notificationUtil.sendStockHoldNotificationToManager = async () => {
+      console.log("Simulating email transport outage...");
+      return { success: false, error: "SMTP connection timeout" };
+    };
+
+    try {
+      const holdRes = await stockService.holdStock(
+        {
+          stockItemId: testStockItem._id,
+          quantity: 2,
+          notes: "Resilience test hold",
+        },
+        { userId: testStaff._id, role: "staff" }
+      );
+
+      assert.ok(holdRes.allocation, "Stock hold succeeds despite notification outage");
+      assert.equal(holdRes.allocation.reservedQuantity, 2);
+
+      // Clean up the created hold
+      await stockService.releaseStockHold(holdRes.allocation._id, {
+        userId: testStaff._id,
+        role: "staff",
+      });
+    } finally {
+      // Restore original notification handler
+      notificationUtil.sendStockHoldNotificationToManager = originalSender;
+    }
+  });
 });

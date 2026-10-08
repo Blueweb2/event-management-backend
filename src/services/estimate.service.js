@@ -584,8 +584,8 @@ const updateEstimateStatus = async ({
   }
 
   if (status === "ACCEPTED") {
-    updateData.acceptedAt =
-      new Date();
+    updateData.acceptedAt = new Date();
+    updateData.expiresAt = null; // Accepted estimates are permanent records and not subject to draft expiration
   }
 
   if (status === "REJECTED") {

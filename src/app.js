@@ -21,6 +21,8 @@ const reportRoutes = require("./routes/report.routes");
 const departmentRoutes = require("./routes/department.routes");
 const stockRoutes = require("./routes/stock.routes");
 
+const mongoose = require("mongoose");
+
 const notFound = require("./middlewares/notFound.middleware");
 const errorHandler = require("./middlewares/error.middleware");
 
@@ -63,11 +65,45 @@ app.use("/api", apiLimiter);
 app.use(express.json({ limit: "1mb" }));
 app.use("/uploads", express.static(require("path").join(__dirname, "../uploads")));
 
-// Health check
-app.get("/api/health", (req, res) => {
-  res.json({
+// ==========================================
+// Health & Readiness Checks
+// ==========================================
+
+const getHealthStatus = () => {
+  const dbStateMap = {
+    0: "disconnected",
+    1: "connected",
+    2: "connecting",
+    3: "disconnecting",
+  };
+  const dbState = mongoose.connection?.readyState ?? 0;
+  const isDbReady = dbState === 1;
+
+  return {
     success: true,
+    status: isDbReady ? "healthy" : "degraded",
     message: "Event Management API is running",
+    timestamp: new Date().toISOString(),
+    uptime: Math.round(process.uptime() * 100) / 100,
+    database: {
+      status: dbStateMap[dbState] || "unknown",
+      ready: isDbReady,
+    },
+  };
+};
+
+// Registered on both /api/health and /health for Render / cloud health checks
+app.get(["/api/health", "/health"], (req, res) => {
+  res.status(200).json(getHealthStatus());
+});
+
+// Root fallback welcoming endpoint
+app.get("/", (req, res) => {
+  res.status(200).json({
+    success: true,
+    name: "Pircello Event Management Backend API",
+    status: "healthy",
+    healthCheck: "/api/health",
   });
 });
 

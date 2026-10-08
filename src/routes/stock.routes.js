@@ -12,6 +12,8 @@ const {
   assignStaffToStock,
   removeEventStockRequirement,
   getStaffAssignedStock,
+  holdStock,
+  releaseStockHold,
   takeStock,
   returnStock,
   verifyStockReturn,
@@ -42,6 +44,28 @@ router.get(
   authenticate,
   authorize("admin", "manager", "staff"),
   getStaffStockSummary
+);
+
+// Staff Hold & Release Hold Actions
+router.post(
+  "/staff/hold",
+  authenticate,
+  authorize("admin", "manager", "staff"),
+  holdStock
+);
+
+router.post(
+  "/staff/hold/:eventStockId/release",
+  authenticate,
+  authorize("admin", "manager", "staff"),
+  releaseStockHold
+);
+
+router.post(
+  "/allocations/:eventStockId/release",
+  authenticate,
+  authorize("admin", "manager", "staff"),
+  releaseStockHold
 );
 
 // Staff Take & Return Actions
@@ -126,7 +150,7 @@ router.get(
 router.get(
   "/items",
   authenticate,
-  authorize("admin", "manager"),
+  authorize("admin", "manager", "staff"),
   getStockItems
 );
 
@@ -140,7 +164,7 @@ router.post(
 router.get(
   "/items/:id",
   authenticate,
-  authorize("admin", "manager"),
+  authorize("admin", "manager", "staff"),
   getStockItemById
 );
 
