@@ -11,7 +11,7 @@ const getDashboardAnalytics = async (req, res, next) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    // 1. Total Revenue from Confirmed/Completed Bookings
+    // 1. Total Revenue: Sum of actual payments/deposits received from clients
     const revenueAggregation = await Booking.aggregate([
       {
         $match: {
@@ -21,7 +21,11 @@ const getDashboardAnalytics = async (req, res, next) => {
       {
         $group: {
           _id: null,
-          totalRevenue: { $sum: "$total" },
+          totalRevenue: {
+            $sum: {
+              $ifNull: ["$paidAmount", { $ifNull: ["$advancePayment", 0] }],
+            },
+          },
         },
       },
     ]);
