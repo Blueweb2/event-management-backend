@@ -658,15 +658,12 @@ const convertEstimateToBooking = async (
   }
 
   // ========================================
-  // Must Be ACCEPTED
+  // Auto-accept if not yet accepted
   // ========================================
 
   if (estimate.status !== "ACCEPTED") {
-    const error = new Error(
-      `Only ACCEPTED estimates can be converted to events. Current status: ${estimate.status}`
-    );
-    error.statusCode = 400;
-    throw error;
+    estimate.status = "ACCEPTED";
+    estimate.acceptedAt = new Date();
   }
 
   // ========================================
@@ -726,6 +723,11 @@ const convertEstimateToBooking = async (
         "booking",
         "eventName eventType eventDate eventTime guests location total status"
       );
+
+    estimate.convertedToEvent = true;
+    estimate.convertedEventId = existingEvent?._id || null;
+    estimate.convertedBookingId = existingBooking._id;
+    await estimate.save();
 
     return {
       booking: existingBooking,
@@ -838,6 +840,11 @@ const convertEstimateToBooking = async (
       select: "name email role",
     },
   ]);
+
+  estimate.convertedToEvent = true;
+  estimate.convertedEventId = event._id;
+  estimate.convertedBookingId = booking._id;
+  await estimate.save();
 
   return { booking, event };
 };
