@@ -1,5 +1,6 @@
 
 const Service = require("../models/service.model");
+const StockItem = require("../models/stockItem.model");
 
 // ==========================================
 // Constants
@@ -266,7 +267,7 @@ const calculateServicesTotal = async ({
     }
 
     // ======================================
-    // Fetch actual service
+    // Fetch actual service or rentable stock item
     // ======================================
 
     const service =
@@ -275,8 +276,58 @@ const calculateServicesTotal = async ({
       );
 
     if (!service) {
+      // Check if this is a rentable stock item
+      const stockItem = await StockItem.findById(serviceId);
+      if (stockItem) {
+        if (stockItem.isRentable === false) {
+          throw new Error(
+            `Equipment "${stockItem.name}" is not available for rental`,
+          );
+        }
+
+        const rentalUnitPrice = Number(
+          stockItem.rentalPrice || stockItem.unitPrice || 0,
+        );
+
+        if (!Number.isFinite(rentalUnitPrice) || rentalUnitPrice < 0) {
+          throw new Error(
+            `Invalid rental price for equipment "${stockItem.name}"`,
+          );
+        }
+
+        const calculatedQuantity = Number(quantity);
+        if (
+          !Number.isInteger(calculatedQuantity) ||
+          calculatedQuantity < 1
+        ) {
+          throw new Error(
+            `Quantity must be at least 1 for "${stockItem.name}"`,
+          );
+        }
+
+        const itemTotal = rentalUnitPrice * calculatedQuantity;
+
+        lineItems.push({
+          serviceId: stockItem._id,
+          serviceName: stockItem.name,
+          category: "equipment",
+          optionId: null,
+          optionName: null,
+          description:
+            stockItem.description ||
+            `Equipment rental (${stockItem.unit || "unit"})`,
+          pricingType: "PER_UNIT",
+          unitLabel: stockItem.unit || "unit",
+          quantity: calculatedQuantity,
+          unitPrice: roundMoney(rentalUnitPrice),
+          total: roundMoney(itemTotal),
+        });
+
+        continue;
+      }
+
       throw new Error(
-        `Service not found: ${serviceId}`,
+        `Service or equipment not found: ${serviceId}`,
       );
     }
 

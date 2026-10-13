@@ -74,6 +74,15 @@ const stockItemSchema = new mongoose.Schema(
       default: 0,
       min: [0, "Unit price cannot be negative"],
     },
+    rentalPrice: {
+      type: Number,
+      default: 0,
+      min: [0, "Rental price cannot be negative"],
+    },
+    isRentable: {
+      type: Boolean,
+      default: true,
+    },
     location: {
       type: String,
       trim: true,
@@ -105,5 +114,6 @@ const stockItemSchema = new mongoose.Schema(
 stockItemSchema.index({ name: 1 });
 stockItemSchema.index({ category: 1 });
 stockItemSchema.index({ availableQuantity: 1 });
+stockItemSchema.index({ isRentable: 1 });
 
 module.exports = mongoose.model("StockItem", stockItemSchema);

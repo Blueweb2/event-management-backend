@@ -163,7 +163,7 @@ const createStockItem = async (data, userId) => {
 };
 
 const getStockItems = async (query = {}) => {
-  const { search, category, lowStock, page = 1, limit = 100 } = query;
+  const { search, category, lowStock, isRentable, rentable, page = 1, limit = 100 } = query;
   const filter = {};
 
   if (category && category !== "ALL") {
@@ -172,6 +172,10 @@ const getStockItems = async (query = {}) => {
 
   if (search && search.trim()) {
     filter.name = { $regex: search.trim(), $options: "i" };
+  }
+
+  if (isRentable === "true" || isRentable === true || rentable === "true" || rentable === true) {
+    filter.isRentable = { $ne: false };
   }
 
   const items = await StockItem.find(filter)
@@ -194,6 +198,29 @@ const getStockItems = async (query = {}) => {
     page: Number(page),
     totalPages: Math.ceil(total / Number(limit)),
   };
+};
+
+const getRentableStockItems = async (query = {}) => {
+  const { search, category } = query;
+  const filter = {
+    isRentable: { $ne: false },
+    availableQuantity: { $gt: 0 },
+  };
+
+  if (category && category !== "ALL") {
+    filter.category = category;
+  }
+
+  if (search && search.trim()) {
+    filter.name = { $regex: search.trim(), $options: "i" };
+  }
+
+  const items = await StockItem.find(filter)
+    .sort({ name: 1 })
+    .select("_id name category totalQuantity availableQuantity unit unitPrice rentalPrice location description isRentable")
+    .lean();
+
+  return items;
 };
 
 const getStockItemById = async (id) => {
@@ -1531,4 +1558,5 @@ module.exports = {
   getStaffStockSummary,
   getManagerStockSummary,
   getManagerStockDashboardSummary: getManagerStockSummary,
+  getRentableStockItems,
 };

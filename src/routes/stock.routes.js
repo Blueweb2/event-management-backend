@@ -21,6 +21,7 @@ const {
   getStockTransactions,
   getStaffStockSummary,
   getManagerStockDashboardSummary,
+  getRentableStockItems,
 } = require("../controllers/stock.controller");
 
 const { authenticate } = require("../middlewares/auth.middleware");
@@ -153,6 +154,9 @@ router.get(
   authorize("admin", "manager", "staff"),
   getStockItems
 );
+
+// Rentable stock items for event booking & estimates
+router.get("/rentable", getRentableStockItems);
 
 router.post(
   "/items",

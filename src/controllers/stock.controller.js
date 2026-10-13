@@ -34,6 +34,18 @@ const getStockItems = async (req, res, next) => {
   }
 };
 
+const getRentableStockItems = async (req, res, next) => {
+  try {
+    const items = await stockService.getRentableStockItems(req.query);
+    res.status(200).json({
+      success: true,
+      data: items,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const getStockItemById = async (req, res, next) => {
   try {
     const data = await stockService.getStockItemById(req.params.id);
@@ -334,4 +346,5 @@ module.exports = {
   getStockTransactions,
   getStaffStockSummary,
   getManagerStockDashboardSummary,
+  getRentableStockItems,
 };
