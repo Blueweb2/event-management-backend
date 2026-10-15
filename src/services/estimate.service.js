@@ -850,6 +850,268 @@ const convertEstimateToBooking = async (
 };
 
 // ==========================================
+// UPDATE ESTIMATE
+// ==========================================
+
+/**
+ * Update an existing estimate.
+ *
+ * Requirements:
+ * - Cannot update an estimate that has already been converted to an event.
+ * - Recalculates pricing via pricing.service.js and recalculates foodMenu.
+ * - Snapshots items and stores updated totals.
+ */
+const updateEstimate = async (
+  estimateId,
+  {
+    eventName,
+    eventType,
+    eventDate,
+    eventTime,
+    guests,
+    location,
+    description,
+    client,
+    services,
+    foodMenu,
+    discountType,
+    discountValue,
+    additionalCharges,
+    updatedBy = null,
+  } = {}
+) => {
+  if (!estimateId) {
+    const error = new Error("Estimate ID is required");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const estimate = await Estimate.findById(estimateId);
+  if (!estimate) {
+    const error = new Error("Estimate not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (estimate.convertedToEvent) {
+    const error = new Error(
+      "Cannot edit an estimate that has already been converted to an event"
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // Update event details if provided
+  if (eventName !== undefined) {
+    if (!eventName?.trim()) {
+      const error = new Error("Event name cannot be empty");
+      error.statusCode = 400;
+      throw error;
+    }
+    estimate.eventName = eventName.trim();
+  }
+
+  if (eventType !== undefined) {
+    if (!eventType?.trim()) {
+      const error = new Error("Event type cannot be empty");
+      error.statusCode = 400;
+      throw error;
+    }
+    estimate.eventType = eventType.trim();
+  }
+
+  if (eventDate !== undefined) {
+    if (!eventDate) {
+      const error = new Error("Event date cannot be empty");
+      error.statusCode = 400;
+      throw error;
+    }
+    estimate.eventDate = eventDate;
+  }
+
+  if (eventTime !== undefined) {
+    if (!eventTime?.trim()) {
+      const error = new Error("Event time cannot be empty");
+      error.statusCode = 400;
+      throw error;
+    }
+    estimate.eventTime = eventTime.trim();
+  }
+
+  if (guests !== undefined) {
+    const guestCount = Number(guests);
+    if (!Number.isInteger(guestCount) || guestCount < 1) {
+      const error = new Error("Guest count must be a positive integer");
+      error.statusCode = 400;
+      throw error;
+    }
+    estimate.guests = guestCount;
+  }
+
+  if (location !== undefined) {
+    if (!location?.trim()) {
+      const error = new Error("Event location cannot be empty");
+      error.statusCode = 400;
+      throw error;
+    }
+    estimate.location = location.trim();
+  }
+
+  if (description !== undefined) {
+    if (!description?.trim()) {
+      const error = new Error("Event description cannot be empty");
+      error.statusCode = 400;
+      throw error;
+    }
+    estimate.description = description.trim();
+  }
+
+  // Update client details if provided
+  if (client) {
+    if (client.name !== undefined) {
+      if (!client.name?.trim()) {
+        const error = new Error("Client name cannot be empty");
+        error.statusCode = 400;
+        throw error;
+      }
+      estimate.client.name = client.name.trim();
+    }
+    if (client.phone !== undefined) {
+      if (!client.phone?.trim()) {
+        const error = new Error("Client phone cannot be empty");
+        error.statusCode = 400;
+        throw error;
+      }
+      estimate.client.phone = client.phone.trim();
+    }
+    if (client.email !== undefined) {
+      if (!client.email?.trim()) {
+        const error = new Error("Client email cannot be empty");
+        error.statusCode = 400;
+        throw error;
+      }
+      estimate.client.email = client.email.trim().toLowerCase();
+    }
+    if (client.message !== undefined) {
+      estimate.client.message = client.message?.trim() || "";
+    }
+    if (client.referralSource !== undefined) {
+      estimate.client.referralSource = client.referralSource?.trim() || "";
+    }
+  }
+
+  // Recalculate services if provided
+  if (Array.isArray(services) && services.length > 0) {
+    for (const item of services) {
+      if (!item.serviceId) {
+        const error = new Error("Each selected service must have a serviceId");
+        error.statusCode = 400;
+        throw error;
+      }
+      if (item.quantity !== undefined && item.quantity !== null) {
+        const quantity = Number(item.quantity);
+        if (!Number.isFinite(quantity) || quantity < 1) {
+          const error = new Error("Service quantity must be at least 1");
+          error.statusCode = 400;
+          throw error;
+        }
+      }
+    }
+
+    const pricingResult = await calculateServicesTotal({
+      selectedServices: services,
+      guests: estimate.guests,
+    });
+    estimate.items = pricingResult.lineItems;
+  }
+
+  // Recalculate food menu if provided
+  if (foodMenu !== undefined) {
+    let foodMenuData = {
+      included: false,
+      servingType: "PER_GUEST",
+      ratePerGuest: 0,
+      totalFoodAmount: 0,
+      notes: "",
+      items: [],
+    };
+
+    if (foodMenu && foodMenu.included) {
+      const items = Array.isArray(foodMenu.items)
+        ? foodMenu.items.map((item) => {
+            const rate = Math.max(0, Number(item.rate || 0));
+            const quantity = Math.max(1, Math.floor(Number(item.quantity || 1)));
+            const amount = Number((rate * quantity).toFixed(2));
+            return {
+              foodItemId: item.foodItemId || null,
+              name: String(item.name || "").trim(),
+              category: String(item.category || "").trim(),
+              dietary: item.dietary || "veg",
+              rate,
+              quantity,
+              amount,
+            };
+          })
+        : [];
+      const totalFoodAmount = items.reduce((total, item) => total + item.amount, 0);
+
+      foodMenuData = {
+        included: true,
+        servingType: "FIXED",
+        ratePerGuest: 0,
+        totalFoodAmount: Number(totalFoodAmount.toFixed(2)),
+        notes: foodMenu.notes ? String(foodMenu.notes).trim() : "",
+        items,
+      };
+    }
+    estimate.foodMenu = foodMenuData;
+  }
+
+  // Calculate combined subtotal (services snapshot line items + food menu)
+  const servicesSubtotal = (estimate.items || []).reduce(
+    (sum, item) => sum + (item.total || 0),
+    0
+  );
+  const foodSubtotal =
+    estimate.foodMenu && estimate.foodMenu.included
+      ? estimate.foodMenu.totalFoodAmount || 0
+      : 0;
+  const combinedSubtotal = Number((servicesSubtotal + foodSubtotal).toFixed(2));
+
+  const resolvedDiscountType =
+    discountType !== undefined ? discountType : estimate.discountType;
+  const resolvedDiscountValue =
+    discountValue !== undefined ? Number(discountValue) : estimate.discountValue;
+  const resolvedAdditionalCharges =
+    additionalCharges !== undefined
+      ? Number(additionalCharges)
+      : estimate.additionalCharges;
+
+  const totals = calculateEstimateTotal({
+    subtotal: combinedSubtotal,
+    discountType: resolvedDiscountType,
+    discountValue: resolvedDiscountValue,
+    additionalCharges: resolvedAdditionalCharges,
+  });
+
+  estimate.subtotal = totals.subtotal;
+  estimate.discount = totals.discount;
+  estimate.discountType = totals.discountType;
+  estimate.discountValue = totals.discountValue;
+  estimate.additionalCharges = totals.additionalCharges;
+  estimate.gstRate = totals.gstRate;
+  estimate.gstAmount = totals.gstAmount;
+  estimate.total = totals.total;
+
+  if (updatedBy) {
+    estimate.updatedBy = updatedBy;
+  }
+
+  await estimate.save();
+  return estimate;
+};
+
+// ==========================================
 // EXPORTS
 // ==========================================
 
@@ -859,4 +1121,5 @@ module.exports = {
   getEstimates,
   updateEstimateStatus,
   convertEstimateToBooking,
+  updateEstimate,
 };

@@ -366,7 +366,7 @@ const getEventById = async (eventId) => {
     )
     .populate(
       "booking",
-      "eventName eventType eventDate eventTime guests location description services foodMenu subtotal discountAmount additionalCharges total currency status"
+      "eventName eventType eventDate eventTime guests location description services foodMenu subtotal discountAmount additionalCharges total currency status paidAmount advancePayment paymentStatus paymentHistory"
     )
     .populate(
       "createdBy",
@@ -374,6 +374,10 @@ const getEventById = async (eventId) => {
     )
     .populate(
       "startedBy",
+      "name email role"
+    )
+    .populate(
+      "paymentHistory.recordedBy",
       "name email role"
     );
 
@@ -411,6 +415,23 @@ const getEventById = async (eventId) => {
       timestamp: new Date(),
     });
     await event.save();
+  }
+
+  // Fallback payment fields from linked booking if missing on event
+  if (event.booking && typeof event.booking === "object") {
+    const b = event.booking;
+    if ((!event.paymentHistory || event.paymentHistory.length === 0) && Array.isArray(b.paymentHistory) && b.paymentHistory.length > 0) {
+      event.paymentHistory = b.paymentHistory;
+    }
+    if ((!event.paidAmount || event.paidAmount === 0) && b.paidAmount) {
+      event.paidAmount = b.paidAmount;
+    }
+    if ((!event.advancePayment || event.advancePayment === 0) && b.advancePayment) {
+      event.advancePayment = b.advancePayment;
+    }
+    if ((!event.paymentStatus || event.paymentStatus === "UNPAID") && b.paymentStatus) {
+      event.paymentStatus = b.paymentStatus;
+    }
   }
 
   return event;

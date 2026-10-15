@@ -24,7 +24,30 @@ async function seed() {
       console.warn("⚠️ Production Notice: ADMIN_PASSWORD environment variable not set. Skipping automatic admin provisioning.");
     }
 
-    // 1. Seed Admin/Manager
+    // 0. Seed Superadmin
+    const superAdminEmail = process.env.SUPERADMIN_EMAIL || "superadmin@eventmanagement.com";
+    const superAdminPassword = process.env.SUPERADMIN_PASSWORD || (isProduction ? null : "superadmin123");
+    let superAdmin = await User.findOne({ email: superAdminEmail });
+    if (!superAdmin && superAdminPassword) {
+      const hashedSuperAdminPassword = await bcrypt.hash(superAdminPassword, 12);
+      superAdmin = await User.create({
+        name: process.env.SUPERADMIN_NAME || "System Superadmin",
+        username: process.env.SUPERADMIN_USERNAME || "superadmin_master",
+        email: superAdminEmail,
+        password: hashedSuperAdminPassword,
+        role: "superadmin",
+        phone: process.env.SUPERADMIN_PHONE || "+1 555 010 0001",
+        location: "New York, USA",
+        department: "Executive System Administration",
+        employmentType: "full-time",
+        isActive: true,
+      });
+      console.log(`Created Superadmin account: ${superAdminEmail}`);
+    } else if (superAdmin) {
+      console.log(`Superadmin already exists: ${superAdminEmail}`);
+    }
+
+    // 1. Seed Manager
     let admin = await User.findOne({ email: adminEmail });
     if (!admin && adminPassword) {
       const hashedAdminPassword = await bcrypt.hash(adminPassword, 12);
@@ -33,16 +56,16 @@ async function seed() {
         username: process.env.ADMIN_USERNAME || "admin_alex",
         email: adminEmail,
         password: hashedAdminPassword,
-        role: "admin",
+        role: "manager",
         phone: process.env.ADMIN_PHONE || "+1 555 019 2831",
         location: "New York, USA",
-        department: "Management",
+        department: "Operations Management",
         employmentType: "full-time",
         isActive: true,
       });
-      console.log(`Created administrator account: ${adminEmail}`);
+      console.log(`Created manager account: ${adminEmail}`);
     } else if (admin) {
-      console.log(`Administrator already exists: ${adminEmail}`);
+      console.log(`Manager already exists: ${adminEmail}`);
     }
 
     // 2. Seed Staff (development/testing only unless explicitly configured)
@@ -154,8 +177,9 @@ async function seed() {
 
     console.log("\nDatabase seeded successfully!");
     console.log("==========================================");
-    console.log("Manager Login: admin@eventmanagement.com  Password: admin123");
-    console.log("Staff Login:   staff@eventmanagement.com  Password: staff123");
+    console.log("Superadmin Login: superadmin@eventmanagement.com  Password: superadmin123");
+    console.log("Manager Login:    admin@eventmanagement.com       Password: admin123");
+    console.log("Staff Login:      staff@eventmanagement.com       Password: staff123");
     console.log("==========================================\n");
 
     await mongoose.disconnect();

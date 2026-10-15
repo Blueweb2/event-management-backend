@@ -10,6 +10,7 @@ const {
   getActivityTimeline,
   cancelEvent,
   deleteEvent,
+  recordEventPayment,
 } = require("../controllers/event.controller");
 
 const { authenticate } = require("../middlewares/auth.middleware");
@@ -91,6 +92,14 @@ router.delete(
   authenticate,
   authorize("Manager"),
   deleteEvent
+);
+
+// Record client payment for event
+router.post(
+  "/:id/payments",
+  authenticate,
+  authorize("Manager"),
+  recordEventPayment
 );
 
 module.exports = router;

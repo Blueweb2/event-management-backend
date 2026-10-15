@@ -76,6 +76,11 @@ const userSchema = new mongoose.Schema(
       maxlength: 100,
     },
 
+    permissions: {
+      type: [String],
+      default: [],
+    },
+
     // ==========================================
     // EMPLOYMENT
     // ==========================================
@@ -119,7 +124,7 @@ const userSchema = new mongoose.Schema(
 
     role: {
       type: String,
-      enum: ["admin", "manager", "staff"],
+      enum: ["superadmin", "admin", "manager", "staff"],
       default: "staff",
     },
 

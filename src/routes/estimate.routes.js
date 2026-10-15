@@ -6,6 +6,7 @@ const {
   getEstimateByIdController,
   updateEstimateStatusController,
   convertEstimateToBookingController,
+  updateEstimateController,
 } = require("../controllers/estimate.controller");
 
 const { authenticate } = require("../middlewares/auth.middleware");
@@ -48,6 +49,18 @@ router.get(
   authenticate,
   authorize("Manager"),
   getEstimateByIdController
+);
+
+// ==========================================
+// UPDATE ESTIMATE
+// PUT /api/estimates/:id
+// ==========================================
+
+router.put(
+  "/:id",
+  authenticate,
+  authorize("admin", "manager"),
+  updateEstimateController
 );
 
 // ==========================================

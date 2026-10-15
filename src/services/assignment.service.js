@@ -66,16 +66,26 @@ const createAssignment = async ({
 
   // The manager UI works with event records, while Duty.event stores the
   // source booking. Accept either identifier and persist the booking ID.
+  let eventRecord = null;
   if (!booking) {
-    const eventRecord = await Event.findById(event).select("booking");
+    eventRecord = await Event.findById(event);
     booking = eventRecord?.booking
       ? await Booking.findById(eventRecord.booking)
       : null;
+  } else {
+    eventRecord = await Event.findOne({ booking: booking._id });
   }
 
   if (!booking) {
     const error = new Error("Event not found");
     error.statusCode = 404;
+    throw error;
+  }
+
+  const eventStatus = String(eventRecord?.status || booking?.status || "").toUpperCase();
+  if (["COMPLETED", "CANCELLED", "REJECTED", "SETTLED"].includes(eventStatus)) {
+    const error = new Error(`Cannot assign staff duties to a ${eventStatus.toLowerCase()} event`);
+    error.statusCode = 400;
     throw error;
   }
 

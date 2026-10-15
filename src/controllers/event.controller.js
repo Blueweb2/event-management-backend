@@ -1,4 +1,6 @@
 const eventService = require("../services/event.service");
+const bookingService = require("../services/booking.service");
+const Event = require("../models/event.model");
 
 // ==========================================
 // Create Event
@@ -217,6 +219,52 @@ const getActivityTimeline = async (req, res, next) => {
 };
 
 // ==========================================
+// Record Client Payment for Event
+// POST /api/events/:id/payments
+// ==========================================
+
+const recordEventPayment = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const event = await Event.findById(id);
+    if (!event) {
+      return res.status(404).json({
+        success: false,
+        message: "Event not found",
+      });
+    }
+
+    const bookingId = event.booking?._id || event.booking;
+    if (!bookingId) {
+      return res.status(400).json({
+        success: false,
+        message: "Source booking not linked to this event",
+      });
+    }
+
+    const result = await bookingService.recordPayment(
+      bookingId,
+      req.body,
+      req.user?._id || req.user?.userId || null
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Payment recorded successfully",
+      data: result,
+    });
+  } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
+      });
+    }
+    next(error);
+  }
+};
+
+// ==========================================
 // Export
 // ==========================================
 
@@ -230,4 +278,5 @@ module.exports = {
   getActivityTimeline,
   cancelEvent,
   deleteEvent,
+  recordEventPayment,
 };

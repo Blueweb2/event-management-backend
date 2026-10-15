@@ -576,9 +576,9 @@ const assignStaffToStock = async (eventStockId, { staffId, expectedReturnAt, not
     let movement = await StockMovement.findOne({ eventStock: allocation._id }).session(session);
     if (!movement) {
       movement = new StockMovement({
-        event: allocation.event._id || allocation.event,
-        booking: allocation.booking,
-        stockItem: allocation.stockItem._id || allocation.stockItem,
+        event: allocation.event?._id || allocation.event || null,
+        booking: allocation.booking || null,
+        stockItem: allocation.stockItem?._id || allocation.stockItem,
         eventStock: allocation._id,
         assignedStaff: staffId,
         expectedQuantity: allocation.requiredQuantity,
@@ -599,7 +599,7 @@ const assignStaffToStock = async (eventStockId, { staffId, expectedReturnAt, not
       .populate("assignedStaff", "name email role phone")
       .populate("assignedBy", "name email");
 
-    emitStockEvent("stock:allocationUpdated", { eventId: allocation.event._id || allocation.event, allocation: populated });
+    emitStockEvent("stock:allocationUpdated", { eventId: allocation.event?._id || allocation.event || null, allocation: populated });
     return populated;
   });
 };
@@ -621,7 +621,7 @@ const removeEventStockRequirement = async (eventStockId, userId) => {
 
     // Release reserved quantity back to available
     if (allocation.reservedQuantity > 0 && allocation.stockItem) {
-      const stockItem = await StockItem.findById(allocation.stockItem._id || allocation.stockItem).session(session);
+      const stockItem = await StockItem.findById(allocation.stockItem?._id || allocation.stockItem).session(session);
       if (stockItem) {
         const prevAvailable = stockItem.availableQuantity;
         stockItem.reservedQuantity = Math.max(0, stockItem.reservedQuantity - allocation.reservedQuantity);
@@ -633,7 +633,7 @@ const removeEventStockRequirement = async (eventStockId, userId) => {
           [
             {
               stockItem: stockItem._id,
-              event: allocation.event._id || allocation.event,
+              event: allocation.event?._id || allocation.event || null,
               type: "UNRESERVED",
               quantity: allocation.reservedQuantity,
               previousAvailable: prevAvailable,
@@ -652,7 +652,7 @@ const removeEventStockRequirement = async (eventStockId, userId) => {
     await StockMovement.deleteMany({ eventStock: allocation._id, status: "ASSIGNED" }).session(session);
     await EventStock.findByIdAndDelete(allocation._id).session(session);
 
-    emitStockEvent("stock:allocationRemoved", { eventId: allocation.event._id || allocation.event, eventStockId: allocation._id });
+    emitStockEvent("stock:allocationRemoved", { eventId: allocation.event?._id || allocation.event || null, eventStockId: allocation._id });
     return { success: true };
   });
 };
@@ -734,7 +734,7 @@ const takeStock = async (eventStockId, { takenQuantity, takeNotes, expectedRetur
       throw error;
     }
 
-    const stockItem = await StockItem.findById(allocation.stockItem._id || allocation.stockItem).session(session);
+    const stockItem = await StockItem.findById(allocation.stockItem?._id || allocation.stockItem).session(session);
     if (!stockItem) {
       const error = new Error("Stock item not found in master inventory");
       error.statusCode = 404;
@@ -787,11 +787,11 @@ const takeStock = async (eventStockId, { takenQuantity, takeNotes, expectedRetur
     let movement = await StockMovement.findOne({ eventStock: allocation._id }).session(session);
     if (!movement) {
       movement = new StockMovement({
-        event: allocation.event._id || allocation.event,
-        booking: allocation.booking,
+        event: allocation.event?._id || allocation.event || null,
+        booking: allocation.booking || null,
         stockItem: stockItem._id,
         eventStock: allocation._id,
-        assignedStaff: allocation.assignedStaff || user.userId || user._id,
+        assignedStaff: allocation.assignedStaff?._id || allocation.assignedStaff || user.userId || user._id,
         expectedQuantity: allocation.requiredQuantity,
       });
     }
@@ -811,7 +811,7 @@ const takeStock = async (eventStockId, { takenQuantity, takeNotes, expectedRetur
       [
         {
           stockItem: stockItem._id,
-          event: allocation.event._id || allocation.event,
+          event: allocation.event?._id || allocation.event || null,
           movement: movement._id,
           type: "TAKEN",
           quantity: actualTaken,
@@ -820,7 +820,7 @@ const takeStock = async (eventStockId, { takenQuantity, takeNotes, expectedRetur
           previousTotal: prevTotal,
           newTotal: stockItem.totalQuantity,
           performedBy: user.userId || user._id,
-          notes: `Staff took ${actualTaken} ${stockItem.unit || "items"} for event "${allocation.event?.eventName || "Event"}". ${takeNotes ? `Note: ${takeNotes}` : ""}`,
+          notes: `Staff took ${actualTaken} ${stockItem.unit || "items"}${allocation.event?.eventName ? ` for event "${allocation.event.eventName}"` : ""}. ${takeNotes ? `Note: ${takeNotes}` : ""}`,
         },
       ],
       { session }
@@ -1275,7 +1275,7 @@ const verifyStockReturn = async (
       [
         {
           stockItem: stockItem._id,
-          event: allocation.event._id || allocation.event,
+          event: allocation.event?._id || allocation.event || null,
           movement: movement?._id || null,
           type: "VERIFIED",
           quantity: finalApprovedRet,
@@ -1295,7 +1295,7 @@ const verifyStockReturn = async (
         [
           {
             stockItem: stockItem._id,
-            event: allocation.event._id || allocation.event,
+            event: allocation.event?._id || allocation.event || null,
             movement: movement?._id || null,
             type: "DAMAGED",
             quantity: finalApprovedDmg,
@@ -1316,7 +1316,7 @@ const verifyStockReturn = async (
         [
           {
             stockItem: stockItem._id,
-            event: allocation.event._id || allocation.event,
+            event: allocation.event?._id || allocation.event || null,
             movement: movement?._id || null,
             type: "LOST",
             quantity: finalApprovedLst,
@@ -1379,8 +1379,8 @@ const reportDiscrepancy = async (eventStockId, { discrepancyNotes, notes: altNot
     await StockTransaction.create(
       [
         {
-          stockItem: allocation.stockItem._id || allocation.stockItem,
-          event: allocation.event._id || allocation.event,
+          stockItem: allocation.stockItem?._id || allocation.stockItem,
+          event: allocation.event?._id || allocation.event || null,
           movement: movement?._id || null,
           type: "DISCREPANCY_RESOLVED",
           quantity: 0,

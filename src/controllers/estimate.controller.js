@@ -4,6 +4,7 @@ const {
   getEstimates,
   updateEstimateStatus,
   convertEstimateToBooking,
+  updateEstimate,
 } = require("../services/estimate.service");
 
 // ==========================================
@@ -443,6 +444,63 @@ const convertEstimateToBookingController =
   };
 
 // ==========================================
+// UPDATE ESTIMATE
+// PUT /api/estimates/:id
+// ==========================================
+
+const updateEstimateController = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const {
+      eventName,
+      eventType,
+      eventDate,
+      eventTime,
+      guests,
+      location,
+      description,
+      client,
+      services,
+      foodMenu,
+      discountType,
+      discountValue,
+      additionalCharges,
+    } = req.body;
+
+    const updated = await updateEstimate(id, {
+      eventName,
+      eventType,
+      eventDate,
+      eventTime,
+      guests,
+      location,
+      description,
+      client,
+      services,
+      foodMenu,
+      discountType,
+      discountValue,
+      additionalCharges,
+      updatedBy: req.user?._id || null,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Estimate updated successfully",
+      data: updated,
+    });
+  } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
+      });
+    }
+    next(error);
+  }
+};
+
+// ==========================================
 // EXPORTS
 // ==========================================
 
@@ -452,4 +510,5 @@ module.exports = {
   getEstimateByIdController,
   updateEstimateStatusController,
   convertEstimateToBookingController,
+  updateEstimateController,
 };

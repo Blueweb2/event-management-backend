@@ -676,4 +676,109 @@ test.describe("Booking & Estimate Management Workflow & RBAC Security Suite", ()
     // Total = 10,000 + 1,800 + 1,200 = 13,000
     assert.strictEqual(est.total, 13000);
   });
+
+  test("9. Edit Estimate Flow: Manager can update an unconverted estimate with recalculated totals, Staff is rejected (HTTP 403), and Converted estimate rejects edits (HTTP 400)", async () => {
+    // 1. Create initial estimate
+    const createRes = await fetch(`${baseUrl}/estimates`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${managerToken}`,
+      },
+      body: JSON.stringify({
+        eventName: "Original Estimate Gala",
+        eventType: "Corporate",
+        eventDate: new Date(Date.now() + 86400000 * 7).toISOString(),
+        eventTime: "18:00",
+        guests: 100,
+        location: "Grand Ballroom",
+        description: "Initial description",
+        client: {
+          name: "Original Client",
+          phone: "9876543210",
+          email: "original@client.com",
+        },
+        services: [
+          {
+            serviceId: testService._id.toString(), // 15,000
+            quantity: 1,
+          },
+        ],
+        discountType: "percentage",
+        discountValue: 0,
+        additionalCharges: 0,
+      }),
+    });
+    assert.strictEqual(createRes.status, 201);
+    const created = (await createRes.json()).data;
+    createdEstimateIds.push(created._id);
+
+    // 2. Staff cannot update estimate (403)
+    const staffUpdateRes = await fetch(`${baseUrl}/estimates/${created._id}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${staffToken}`,
+      },
+      body: JSON.stringify({
+        eventName: "Hacked by staff",
+      }),
+    });
+    assert.strictEqual(staffUpdateRes.status, 403, "Staff must be forbidden from updating estimates");
+
+    // 3. Manager updates estimate (guests 200, adds discount and additional charges)
+    const updateRes = await fetch(`${baseUrl}/estimates/${created._id}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${managerToken}`,
+      },
+      body: JSON.stringify({
+        eventName: "Updated Estimate Gala",
+        guests: 200,
+        location: "Diamond Pavilion",
+        discountType: "percentage",
+        discountValue: 10, // 10%
+        additionalCharges: 2000,
+      }),
+    });
+    assert.strictEqual(updateRes.status, 200);
+    const updated = (await updateRes.json()).data;
+    assert.strictEqual(updated.eventName, "Updated Estimate Gala");
+    assert.strictEqual(updated.guests, 200);
+    assert.strictEqual(updated.location, "Diamond Pavilion");
+    assert.strictEqual(updated.discountValue, 10);
+    assert.strictEqual(updated.additionalCharges, 2000);
+
+    // Subtotal 15,000 - 10% (1,500) = 13,500 Taxable + 18% GST (2,430) + 2,000 = 17,930 Total
+    assert.strictEqual(updated.subtotal, 15000);
+    assert.strictEqual(updated.discount, 1500);
+    assert.strictEqual(updated.gstAmount, 2430);
+    assert.strictEqual(updated.total, 17930);
+
+    // 4. Convert estimate to event
+    const convertRes = await fetch(`${baseUrl}/estimates/${created._id}/convert`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${managerToken}`,
+      },
+    });
+    assert.strictEqual(convertRes.status, 201);
+    const convertBody = await convertRes.json();
+    if (convertBody.data?.booking?._id) createdBookingIds.push(convertBody.data.booking._id);
+    if (convertBody.data?.event?._id) createdEventIds.push(convertBody.data.event._id);
+
+    // 5. Attempting to update after conversion must fail with 400
+    const postConvertUpdateRes = await fetch(`${baseUrl}/estimates/${created._id}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${managerToken}`,
+      },
+      body: JSON.stringify({
+        eventName: "Cannot edit after conversion",
+      }),
+    });
+    assert.strictEqual(postConvertUpdateRes.status, 400, "Must reject edits after estimate converted to event");
+  });
 });
