@@ -6,6 +6,24 @@ const {
   sendDutyAssignmentNotification,
   sendDutyResponseNotificationToManager,
 } = require("../utils/notification.util");
+const { normalizeDepartment } = require("../utils/department.constants");
+
+const isSuperAdmin = (requester) => {
+  const r = (requester?.role || "").toLowerCase();
+  return r === "superadmin" || r === "admin";
+};
+
+const isChefManager = (requester) => {
+  const r = (requester?.role || "").toLowerCase();
+  return r === "manager" && normalizeDepartment(requester?.department) === "Kitchen";
+};
+
+const isDepartmentManager = (requester) => {
+  const r = (requester?.role || "").toLowerCase();
+  return r === "manager";
+};
+
+const escapeRegex = (str) => String(str || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
  * Calculates duty duration in decimal hours and total payout amount
@@ -57,6 +75,7 @@ const createAssignment = async ({
   notes = "",
   checklist = [],
   assignedBy,
+  requester = null,
 }) => {
   // ==========================================
   // CHECK EVENT
@@ -106,6 +125,29 @@ const createAssignment = async ({
 
     error.statusCode = 404;
     throw error;
+  }
+
+  // ==========================================
+  // ROLE & DEPARTMENT AUTHORIZATION
+  // ==========================================
+
+  if (requester && !isSuperAdmin(requester)) {
+    if (isChefManager(requester)) {
+      if (normalizeDepartment(staffMember.department) !== "Kitchen") {
+        const error = new Error("Access denied: Chef Manager can only assign kitchen staff");
+        error.statusCode = 403;
+        throw error;
+      }
+      department = "Kitchen";
+    } else if (isDepartmentManager(requester)) {
+      const authDept = requester.department || "";
+      if (normalizeDepartment(staffMember.department) !== normalizeDepartment(authDept)) {
+        const error = new Error(`Access denied: You can only assign staff from your department ("${authDept}")`);
+        error.statusCode = 403;
+        throw error;
+      }
+      department = authDept;
+    }
   }
 
   // ==========================================
@@ -195,8 +237,10 @@ const createAssignment = async ({
  * Get assignments
  */
 const getAssignments = async ({
+  requester = null,
   event,
   staff,
+  department = "",
   date,
   dutyDate,
   startDate,
@@ -236,7 +280,68 @@ const getAssignments = async ({
     }
   }
 
-  if (staff) {
+  const isSuper = isSuperAdmin(requester);
+  const isChef = isChefManager(requester);
+  const isMgr = !isSuper && isDepartmentManager(requester);
+
+  if (requester) {
+    if ((requester.role || "").toLowerCase() === "staff") {
+      query.staff = requester.userId;
+    } else if (isChef) {
+      if (department && department !== "all" && normalizeDepartment(department) !== "Kitchen") {
+        const error = new Error("Access denied: Chef Manager cannot view assignments outside Kitchen");
+        error.statusCode = 403;
+        throw error;
+      }
+      const kUsers = await User.find({ department: { $regex: /kitchen|chef|cook/i }, role: "staff" }).select("_id");
+      const kStaffIds = kUsers.map((u) => u._id);
+      if (staff) {
+        if (!kStaffIds.some((id) => String(id) === String(staff))) {
+          const error = new Error("Access denied: Staff belongs to another department");
+          error.statusCode = 403;
+          throw error;
+        }
+        query.staff = staff;
+      } else {
+        query.$or = [
+          { department: { $regex: /kitchen|chef|cook/i } },
+          { staff: { $in: kStaffIds } },
+        ];
+      }
+    } else if (isMgr) {
+      const authDept = requester.department || "";
+      if (department && department !== "all" && normalizeDepartment(department) !== normalizeDepartment(authDept)) {
+        const error = new Error(`Access denied: You can only view assignments for the "${authDept}" department`);
+        error.statusCode = 403;
+        throw error;
+      }
+      const dUsers = await User.find({
+        department: { $regex: new RegExp(`^${escapeRegex(authDept)}$`, "i") },
+        role: "staff",
+      }).select("_id");
+      const dStaffIds = dUsers.map((u) => u._id);
+      if (staff) {
+        if (!dStaffIds.some((id) => String(id) === String(staff))) {
+          const error = new Error("Access denied: Staff belongs to another department");
+          error.statusCode = 403;
+          throw error;
+        }
+        query.staff = staff;
+      } else {
+        query.$or = [
+          { department: { $regex: new RegExp(`^${escapeRegex(authDept)}$`, "i") } },
+          { staff: { $in: dStaffIds } },
+        ];
+      }
+    } else if (isSuper) {
+      if (department && department !== "all") {
+        query.department = { $regex: new RegExp(`^${escapeRegex(department)}$`, "i") };
+      }
+      if (staff) {
+        query.staff = staff;
+      }
+    }
+  } else if (staff) {
     query.staff = staff;
   }
 
@@ -353,6 +458,15 @@ const getAssignments = async ({
           a.event.startedAt = matchingEvt.startedAt;
         }
       }
+      if (isChef) {
+        a.hourlyRate = 0;
+        a.totalAmount = 0;
+      }
+    });
+  } else if (isChef) {
+    assignments.forEach((a) => {
+      a.hourlyRate = 0;
+      a.totalAmount = 0;
     });
   }
 
@@ -373,7 +487,8 @@ const getAssignments = async ({
  * Get assignment by ID
  */
 const getAssignmentById = async (
-  assignmentId
+  assignmentId,
+  requester = null
 ) => {
   const assignment =
     await Duty.findById(assignmentId)
@@ -397,6 +512,31 @@ const getAssignmentById = async (
 
     error.statusCode = 404;
     throw error;
+  }
+
+  if (requester && !isSuperAdmin(requester)) {
+    const isChef = isChefManager(requester);
+    const isMgr = !isChef && isDepartmentManager(requester);
+    if (isChef) {
+      const isKitchenDuty = normalizeDepartment(assignment.department) === "Kitchen" ||
+        (assignment.staff && normalizeDepartment(assignment.staff.department) === "Kitchen");
+      if (!isKitchenDuty) {
+        const error = new Error("Access denied: Assignment belongs to another department");
+        error.statusCode = 403;
+        throw error;
+      }
+      assignment.hourlyRate = 0;
+      assignment.totalAmount = 0;
+    } else if (isMgr) {
+      const authDept = requester.department || "";
+      const isDeptDuty = normalizeDepartment(assignment.department) === normalizeDepartment(authDept) ||
+        (assignment.staff && normalizeDepartment(assignment.staff.department) === normalizeDepartment(authDept));
+      if (!isDeptDuty) {
+        const error = new Error("Access denied: Assignment belongs to another department");
+        error.statusCode = 403;
+        throw error;
+      }
+    }
   }
 
   if (assignment.event) {
@@ -436,7 +576,8 @@ const updateAssignment = async (
     paymentStatus,
     paymentReference,
     paidAt,
-  }
+  },
+  requester = null
 ) => {
   const assignment =
     await Duty.findById(assignmentId);
@@ -448,6 +589,37 @@ const updateAssignment = async (
 
     error.statusCode = 404;
     throw error;
+  }
+
+  if (requester && !isSuperAdmin(requester)) {
+    const isChef = isChefManager(requester);
+    const isMgr = !isChef && isDepartmentManager(requester);
+    if (isChef) {
+      const isKitchenDuty = normalizeDepartment(assignment.department) === "Kitchen";
+      if (!isKitchenDuty) {
+        const error = new Error("Access denied: Assignment belongs to another department");
+        error.statusCode = 403;
+        throw error;
+      }
+      if (department !== undefined && normalizeDepartment(department) !== "Kitchen") {
+        const error = new Error("Access denied: Cannot reassign kitchen duty to another department");
+        error.statusCode = 403;
+        throw error;
+      }
+    } else if (isMgr) {
+      const authDept = requester.department || "";
+      const isDeptDuty = normalizeDepartment(assignment.department) === normalizeDepartment(authDept);
+      if (!isDeptDuty) {
+        const error = new Error("Access denied: Assignment belongs to another department");
+        error.statusCode = 403;
+        throw error;
+      }
+      if (department !== undefined && normalizeDepartment(department) !== normalizeDepartment(authDept)) {
+        const error = new Error(`Access denied: Cannot reassign duty to another department (must remain "${authDept}")`);
+        error.statusCode = 403;
+        throw error;
+      }
+    }
   }
 
   if (checklist !== undefined) {

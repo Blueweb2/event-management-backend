@@ -59,6 +59,7 @@ const createAssignment = async (
         checklist,
         assignedBy:
           req.user.userId,
+        requester: req.user,
       });
 
     res.status(201).json({
@@ -92,9 +93,10 @@ const getAssignments = async (
     }
 
     const result =
-      await assignmentService.getAssignments(
-        filters
-      );
+      await assignmentService.getAssignments({
+        ...filters,
+        requester: req.user,
+      });
 
     res.status(200).json({
       success: true,
@@ -118,7 +120,8 @@ const getAssignmentById = async (
   try {
     const assignment =
       await assignmentService.getAssignmentById(
-        req.params.id
+        req.params.id,
+        req.user
       );
 
     res.status(200).json({
@@ -145,7 +148,8 @@ const updateAssignment = async (
     const assignment =
       await assignmentService.updateAssignment(
         req.params.id,
-        req.body
+        req.body,
+        req.user
       );
 
     res.status(200).json({

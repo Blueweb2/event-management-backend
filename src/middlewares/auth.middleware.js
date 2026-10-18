@@ -1,6 +1,6 @@
 const { verifyToken } = require("../utils/jwt");
 
-const authenticate = (req, res, next) => {
+const authenticate = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
 
@@ -36,10 +36,39 @@ const authenticate = (req, res, next) => {
       });
     }
 
+    let role = (decoded.role || "").toLowerCase();
+    let department = decoded.department || "";
+    let permissions = decoded.permissions || [];
+    let name = decoded.name || "";
+    let email = decoded.email || "";
+
+    try {
+      const User = require("../models/user.model");
+      const dbUser = await User.findById(decoded.userId).select("role department permissions isActive name email");
+      if (dbUser) {
+        if (!dbUser.isActive) {
+          return res.status(401).json({
+            success: false,
+            message: "Account has been deactivated",
+          });
+        }
+        role = (dbUser.role || role).toLowerCase();
+        department = dbUser.department !== undefined ? dbUser.department : department;
+        permissions = dbUser.permissions || permissions;
+        name = dbUser.name || name;
+        email = dbUser.email || email;
+      }
+    } catch (_dbErr) {
+      // Fallback to token decoded attributes in edge cases
+    }
+
     req.user = {
       userId: decoded.userId,
-      role: decoded.role,
-      department: decoded.department || "",
+      role,
+      department,
+      permissions,
+      name,
+      email,
     };
 
     next();

@@ -4,11 +4,7 @@ const staffService = require("../services/staff.service");
  * Create staff
  * POST /api/users/staff
  */
-const createStaff = async (
-  req,
-  res,
-  next
-) => {
+const createStaff = async (req, res, next) => {
   try {
     const {
       name,
@@ -23,63 +19,45 @@ const createStaff = async (
       hourlyRate,
       employeeId,
       department,
+      role,
       emergencyContact,
     } = req.body;
 
-    // ==========================================
     // VALIDATION
-    // ==========================================
-
-    if (
-      !name ||
-      !username ||
-      !email ||
-      !password
-    ) {
-      const error = new Error(
-        "Name, username, email and password are required"
-      );
-
+    if (!name || !username || !email || !password) {
+      const error = new Error("Name, username, email and password are required");
       error.statusCode = 400;
-
       throw error;
     }
 
     if (password.length < 6) {
-      const error = new Error(
-        "Password must be at least 6 characters"
-      );
-
+      const error = new Error("Password must be at least 6 characters");
       error.statusCode = 400;
-
       throw error;
     }
 
-    const staff =
-      await staffService.createStaff({
-        name,
-        username,
-        email,
-        password,
-        phone,
-        location,
-        employmentType,
-        salary,
-        salaryType,
-        hourlyRate,
-        employeeId,
-        department,
-        emergencyContact,
-
-        // Manager/admin creating this account
-        createdBy:
-          req.user?.userId || null,
-      });
+    const staff = await staffService.createStaff({
+      name,
+      username,
+      email,
+      password,
+      phone,
+      location,
+      employmentType,
+      salary,
+      salaryType,
+      hourlyRate,
+      employeeId,
+      department,
+      role,
+      emergencyContact,
+      createdBy: req.user?.userId || null,
+      requester: req.user,
+    });
 
     return res.status(201).json({
       success: true,
-      message:
-        "Staff account created successfully",
+      message: "Staff account created successfully",
       data: {
         staff,
       },
@@ -93,33 +71,34 @@ const createStaff = async (
  * Get all staff
  * GET /api/users/staff
  */
-const getStaff = async (
-  req,
-  res,
-  next
-) => {
+const getStaff = async (req, res, next) => {
   try {
     const {
       search,
       status,
       department,
+      role,
+      employmentType,
       page,
       limit,
     } = req.query;
 
-    const result =
-      await staffService.getStaff({
-        search,
-        status,
-        department,
-        page,
-        limit,
-      });
+    const result = await staffService.getStaff({
+      requester: req.user,
+      search,
+      status,
+      department,
+      role,
+      employmentType,
+      page,
+      limit,
+    });
 
     return res.status(200).json({
       success: true,
       data: result.staff,
       pagination: result.pagination,
+      summary: result.summary,
     });
   } catch (error) {
     next(error);
@@ -130,16 +109,9 @@ const getStaff = async (
  * Get staff by ID
  * GET /api/users/staff/:id
  */
-const getStaffById = async (
-  req,
-  res,
-  next
-) => {
+const getStaffById = async (req, res, next) => {
   try {
-    const staff =
-      await staffService.getStaffById(
-        req.params.id
-      );
+    const staff = await staffService.getStaffById(req.params.id, req.user);
 
     return res.status(200).json({
       success: true,
@@ -156,11 +128,7 @@ const getStaffById = async (
  * Update staff
  * PUT /api/users/staff/:id
  */
-const updateStaff = async (
-  req,
-  res,
-  next
-) => {
+const updateStaff = async (req, res, next) => {
   try {
     const {
       name,
@@ -174,34 +142,35 @@ const updateStaff = async (
       hourlyRate,
       employeeId,
       department,
+      role,
       emergencyContact,
       avatar,
     } = req.body;
 
-    const staff =
-      await staffService.updateStaff(
-        req.params.id,
-        {
-          name,
-          username,
-          email,
-          phone,
-          location,
-          employmentType,
-          salary,
-          salaryType,
-          hourlyRate,
-          employeeId,
-          department,
-          emergencyContact,
-          avatar,
-        }
-      );
+    const staff = await staffService.updateStaff(
+      req.params.id,
+      {
+        name,
+        username,
+        email,
+        phone,
+        location,
+        employmentType,
+        salary,
+        salaryType,
+        hourlyRate,
+        employeeId,
+        department,
+        role,
+        emergencyContact,
+        avatar,
+      },
+      req.user
+    );
 
     return res.status(200).json({
       success: true,
-      message:
-        "Staff profile updated successfully",
+      message: "Staff profile updated successfully",
       data: {
         staff,
       },
@@ -215,37 +184,25 @@ const updateStaff = async (
  * Activate / deactivate staff
  * PATCH /api/users/staff/:id/status
  */
-const updateStaffStatus = async (
-  req,
-  res,
-  next
-) => {
+const updateStaffStatus = async (req, res, next) => {
   try {
     const { isActive } = req.body;
 
-    if (
-      typeof isActive !== "boolean"
-    ) {
-      const error = new Error(
-        "isActive must be a boolean"
-      );
-
+    if (typeof isActive !== "boolean") {
+      const error = new Error("isActive must be a boolean");
       error.statusCode = 400;
-
       throw error;
     }
 
-    const staff =
-      await staffService.updateStaffStatus(
-        req.params.id,
-        isActive
-      );
+    const staff = await staffService.updateStaffStatus(
+      req.params.id,
+      isActive,
+      req.user
+    );
 
     return res.status(200).json({
       success: true,
-      message: isActive
-        ? "Staff account activated"
-        : "Staff account deactivated",
+      message: isActive ? "Staff account activated" : "Staff account deactivated",
       data: {
         staff,
       },
@@ -259,35 +216,25 @@ const updateStaffStatus = async (
  * Reset staff password
  * PATCH /api/users/staff/:id/password
  */
-const resetStaffPassword = async (
-  req,
-  res,
-  next
-) => {
+const resetStaffPassword = async (req, res, next) => {
   try {
-    const { newPassword } =
-      req.body;
+    const { newPassword } = req.body;
 
     if (!newPassword) {
-      const error = new Error(
-        "New password is required"
-      );
-
+      const error = new Error("New password is required");
       error.statusCode = 400;
-
       throw error;
     }
 
-    const result =
-      await staffService.resetStaffPassword(
-        req.params.id,
-        newPassword
-      );
+    const result = await staffService.resetStaffPassword(
+      req.params.id,
+      newPassword,
+      req.user
+    );
 
     return res.status(200).json({
       success: true,
-      message:
-        "Staff password updated successfully",
+      message: "Staff password updated successfully",
       data: result,
     });
   } catch (error) {
@@ -308,7 +255,11 @@ const uploadStaffAvatar = async (req, res, next) => {
     }
 
     const avatarUrl = `/uploads/avatars/${req.file.filename}`;
-    const staff = await staffService.uploadStaffAvatar(req.params.id, avatarUrl);
+    const staff = await staffService.uploadStaffAvatar(
+      req.params.id,
+      avatarUrl,
+      req.user
+    );
 
     return res.status(200).json({
       success: true,

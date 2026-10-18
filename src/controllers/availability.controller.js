@@ -61,6 +61,7 @@ const setAvailability = async (
           notes,
           createdBy:
             req.user.userId,
+          requester: req.user,
         }
       );
 
@@ -94,9 +95,10 @@ const getAvailability = async (
     }
 
     const result =
-      await availabilityService.getAvailability(
-        filters
-      );
+      await availabilityService.getAvailability({
+        ...filters,
+        requester: req.user,
+      });
 
     res.status(200).json({
       success: true,

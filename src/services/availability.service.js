@@ -1,5 +1,23 @@
 const Availability = require("../models/availability.model");
 const User = require("../models/user.model");
+const { normalizeDepartment } = require("../utils/department.constants");
+
+const isSuperAdmin = (requester) => {
+  const r = (requester?.role || "").toLowerCase();
+  return r === "superadmin" || r === "admin";
+};
+
+const isChefManager = (requester) => {
+  const r = (requester?.role || "").toLowerCase();
+  return r === "manager" && normalizeDepartment(requester?.department) === "Kitchen";
+};
+
+const isDepartmentManager = (requester) => {
+  const r = (requester?.role || "").toLowerCase();
+  return r === "manager";
+};
+
+const escapeRegex = (str) => String(str || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
  * Create or update staff availability
@@ -12,6 +30,7 @@ const setAvailability = async ({
   endTime = "",
   notes = "",
   createdBy = null,
+  requester = null,
 }) => {
   const staffMember =
     await User.findOne({
@@ -26,6 +45,28 @@ const setAvailability = async ({
 
     error.statusCode = 404;
     throw error;
+  }
+
+  // Role and department authorization check
+  if (requester && !isSuperAdmin(requester)) {
+    if (requester.role === "staff" && String(requester.userId) !== String(staff)) {
+      const error = new Error("You can only update your own availability");
+      error.statusCode = 403;
+      throw error;
+    }
+    if (isChefManager(requester) && normalizeDepartment(staffMember.department) !== "Kitchen") {
+      const error = new Error("Access denied: Staff belongs to another department");
+      error.statusCode = 403;
+      throw error;
+    }
+    if (isDepartmentManager(requester)) {
+      const authDept = requester.department || "";
+      if (normalizeDepartment(staffMember.department) !== normalizeDepartment(authDept)) {
+        const error = new Error("Access denied: Staff belongs to another department");
+        error.statusCode = 403;
+        throw error;
+      }
+    }
   }
 
   const availability =
@@ -68,6 +109,7 @@ const getAvailability = async ({
   status,
   page = 1,
   limit = 50,
+  requester = null,
 }) => {
   const currentPage = Math.max(
     Number(page) || 1,
@@ -81,7 +123,43 @@ const getAvailability = async ({
 
   const query = {};
 
-  if (staff) {
+  if (requester) {
+    if ((requester.role || "").toLowerCase() === "staff") {
+      query.staff = requester.userId;
+    } else if (isChefManager(requester)) {
+      const kUsers = await User.find({ department: { $regex: /kitchen|chef|cook/i }, role: "staff" }).select("_id");
+      const kStaffIds = kUsers.map((u) => u._id);
+      if (staff) {
+        if (!kStaffIds.some((id) => String(id) === String(staff))) {
+          const error = new Error("Access denied: Staff belongs to another department");
+          error.statusCode = 403;
+          throw error;
+        }
+        query.staff = staff;
+      } else {
+        query.staff = { $in: kStaffIds };
+      }
+    } else if (isDepartmentManager(requester) && !isSuperAdmin(requester)) {
+      const authDept = requester.department || "";
+      const dUsers = await User.find({
+        department: { $regex: new RegExp(`^${escapeRegex(authDept)}$`, "i") },
+        role: "staff",
+      }).select("_id");
+      const dStaffIds = dUsers.map((u) => u._id);
+      if (staff) {
+        if (!dStaffIds.some((id) => String(id) === String(staff))) {
+          const error = new Error("Access denied: Staff belongs to another department");
+          error.statusCode = 403;
+          throw error;
+        }
+        query.staff = staff;
+      } else {
+        query.staff = { $in: dStaffIds };
+      }
+    } else if (staff) {
+      query.staff = staff;
+    }
+  } else if (staff) {
     query.staff = staff;
   }
 

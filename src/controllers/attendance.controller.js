@@ -165,9 +165,10 @@ const getAttendance = async (
     }
 
     const result =
-      await attendanceService.getAttendance(
-        filters
-      );
+      await attendanceService.getAttendance({
+        ...filters,
+        requester: req.user,
+      });
 
     res.status(200).json({
       success: true,
