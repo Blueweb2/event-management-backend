@@ -9,6 +9,24 @@ const { authorize } = require("../middlewares/role.middleware");
 
 const router = express.Router();
 
+const requireReportAccess = (req, res, next) => {
+  const role = (req.user?.role || "").toLowerCase();
+  if (role === "superadmin" || role === "admin") return next();
+  const dept = (req.user?.department || "").toLowerCase();
+  if (
+    dept.includes("kitchen") ||
+    dept.includes("catering") ||
+    dept.includes("chef") ||
+    dept.includes("cook")
+  ) {
+    return res.status(403).json({
+      success: false,
+      message: "Access denied: Chef Managers do not have permission to view executive reports",
+    });
+  }
+  next();
+};
+
 /**
  * Get dashboard analytics
  */
@@ -16,6 +34,7 @@ router.get(
   "/analytics",
   authenticate,
   authorize("admin", "Manager"),
+  requireReportAccess,
   getDashboardAnalytics
 );
 

@@ -42,12 +42,26 @@ const upload = multer({
 // SERVICE ROUTES
 // ==========================================
 
+const requireServiceManageAccess = (req, res, next) => {
+  const role = (req.user?.role || "").toLowerCase();
+  if (role === "superadmin" || role === "admin") return next();
+  const dept = (req.user?.department || "").toLowerCase();
+  if (dept.includes("kitchen") || dept.includes("chef") || dept.includes("cook")) {
+    return res.status(403).json({
+      success: false,
+      message: "Access denied: Chef Managers manage culinary menus under Food Menu, not service packages",
+    });
+  }
+  next();
+};
+
 // Upload service image
 // POST /api/services/upload
 router.post(
   "/upload",
   authenticate,
   authorize("admin", "Manager"),
+  requireServiceManageAccess,
   upload.single("image"),
   uploadServiceImage
 );
@@ -66,14 +80,14 @@ router.get("/:id", getServiceById);
 
 // Create a new service
 // POST /api/services
-router.post("/", authenticate, authorize("admin", "Manager"), createService);
+router.post("/", authenticate, authorize("admin", "Manager"), requireServiceManageAccess, createService);
 
 // Update a service
 // PUT /api/services/:id
-router.put("/:id", authenticate, authorize("admin", "Manager"), updateService);
+router.put("/:id", authenticate, authorize("admin", "Manager"), requireServiceManageAccess, updateService);
 
 // Deactivate a service
 // DELETE /api/services/:id
-router.delete("/:id", authenticate, authorize("admin", "Manager"), deleteService);
+router.delete("/:id", authenticate, authorize("admin", "Manager"), requireServiceManageAccess, deleteService);
 
 module.exports = router;

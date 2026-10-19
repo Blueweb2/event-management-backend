@@ -43,11 +43,33 @@ router.get("/", getFoodItemsController);
 // GET single item
 router.get("/:id", getFoodItemByIdController);
 
+// Department restriction: Only Kitchen/Catering managers or Super Admin can mutate food items
+const requireFoodManageAccess = (req, res, next) => {
+  const role = (req.user?.role || "").toLowerCase();
+  if (role === "superadmin" || role === "admin") return next();
+  const dept = (req.user?.department || "").toLowerCase();
+  if (
+    dept.includes("kitchen") ||
+    dept.includes("catering") ||
+    dept.includes("chef") ||
+    dept.includes("cook") ||
+    dept.includes("food") ||
+    dept.includes("operation")
+  ) {
+    return next();
+  }
+  return res.status(403).json({
+    success: false,
+    message: "Access denied: Food catalog management is restricted to Kitchen Department and Super Admin",
+  });
+};
+
 // Protected routes (Manager only)
 router.post(
   "/upload",
   authenticate,
   authorize("Manager"),
+  requireFoodManageAccess,
   upload.single("image"),
   uploadFoodImageController
 );
@@ -56,6 +78,7 @@ router.post(
   "/",
   authenticate,
   authorize("Manager"),
+  requireFoodManageAccess,
   createFoodItemController
 );
 
@@ -63,6 +86,7 @@ router.put(
   "/:id",
   authenticate,
   authorize("Manager"),
+  requireFoodManageAccess,
   updateFoodItemController
 );
 
@@ -70,6 +94,7 @@ router.delete(
   "/:id",
   authenticate,
   authorize("Manager"),
+  requireFoodManageAccess,
   deleteFoodItemController
 );
 
