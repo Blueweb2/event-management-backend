@@ -52,7 +52,8 @@ const getStockItemById = async (req, res, next) => {
     res.status(200).json({
       success: true,
       data: data.item,
-      recentTransactions: data.recentTransactions,
+      recentTransactions: data.recentTransactions || [],
+      allocations: data.allocations || [],
     });
   } catch (error) {
     next(error);

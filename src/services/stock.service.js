@@ -236,13 +236,20 @@ const getStockItemById = async (id) => {
 
   const recentTransactions = await StockTransaction.find({ stockItem: id })
     .sort({ createdAt: -1 })
-    .limit(20)
+    .limit(50)
     .populate("performedBy", "name email role")
     .populate("event", "eventName eventDate location");
+
+  const allocations = await EventStock.find({ stockItem: id })
+    .sort({ createdAt: -1 })
+    .populate("event", "eventName eventDate location status")
+    .populate("assignedStaff", "name email phone")
+    .populate("verifiedBy", "name email");
 
   return {
     item,
     recentTransactions,
+    allocations,
   };
 };
 
