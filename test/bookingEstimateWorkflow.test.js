@@ -781,4 +781,67 @@ test.describe("Booking & Estimate Management Workflow & RBAC Security Suite", ()
     });
     assert.strictEqual(postConvertUpdateRes.status, 400, "Must reject edits after estimate converted to event");
   });
+
+  test("10. Date-Over Estimates: Past date estimates are auto-cancelled and cannot be accepted for events", async () => {
+    // 1. Create estimate with past eventDate directly in DB or via creation then setting date to past
+    const est = await Estimate.create({
+      estimateNumber: `EST-PAST-${Date.now()}`,
+      eventName: "Expired Past Proposal",
+      eventType: "Birthday",
+      eventDate: new Date(Date.now() - 86400000 * 3), // 3 days ago
+      eventTime: "18:00",
+      guests: 50,
+      location: "Past Venue",
+      description: "Date over estimate test",
+      client: {
+        name: "Past Client",
+        phone: "9123456799",
+        email: "pastclient@example.com",
+      },
+      items: [
+        {
+          serviceId: testService._id,
+          serviceName: "Grand Photography",
+          category: "photography",
+          pricingType: "FIXED",
+          quantity: 1,
+          unitPrice: 15000,
+          total: 15000,
+        },
+      ],
+      subtotal: 15000,
+      discount: 0,
+      discountType: "percentage",
+      discountValue: 0,
+      additionalCharges: 0,
+      gstRate: 18,
+      gstAmount: 2700,
+      total: 17700,
+      status: "DRAFT",
+    });
+    createdEstimateIds.push(est._id);
+
+    // 2. Attempting to convert past estimate must return HTTP 400
+    const convertRes = await fetch(`${baseUrl}/estimates/${est._id}/convert`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${managerToken}`,
+      },
+    });
+    assert.strictEqual(convertRes.status, 400, "Must reject converting past-date estimates with HTTP 400");
+    const convertBody = await convertRes.json();
+    assert.match(convertBody.message || "", /event date has already passed/i);
+
+    // 3. Querying GET /estimates should auto-cancel this estimate
+    const listRes = await fetch(`${baseUrl}/estimates`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${managerToken}`,
+      },
+    });
+    assert.strictEqual(listRes.status, 200);
+
+    const updatedEst = await Estimate.findById(est._id);
+    assert.strictEqual(updatedEst.status, "CANCELLED", "Past date unconverted estimate must be auto-cancelled");
+  });
 });

@@ -2,6 +2,7 @@ const Duty = require("../models/duty.model");
 const User = require("../models/user.model");
 const Booking = require("../models/booking.model");
 const Event = require("../models/event.model");
+const { getIO } = require("../socket");
 const {
   sendDutyAssignmentNotification,
   sendDutyResponseNotificationToManager,
@@ -890,6 +891,27 @@ const acceptAssignment = async (assignmentId, userId, userRole = "") => {
     status: "ACCEPTED",
   }).catch(() => {});
 
+  // Real-time socket broadcast
+  try {
+    const io = getIO();
+    if (io) {
+      const payload = {
+        dutyId: assignment._id,
+        status: "ACCEPTED",
+        duty: populated,
+        eventId: assignment.event,
+        staffId: assignment.staff,
+      };
+      io.to(`event:${assignment.event}`).emit("duty:updated", payload);
+      io.to(`event:${assignment.event}`).emit("duty:refresh", payload);
+      io.to(`staff:${assignment.staff}`).emit("duty:updated", payload);
+      io.emit("duty:updated", payload);
+      io.emit("duty:refresh", payload);
+    }
+  } catch (socketErr) {
+    console.warn("Socket broadcast error on acceptAssignment:", socketErr.message);
+  }
+
   return populated;
 };
 
@@ -943,6 +965,28 @@ const rejectAssignment = async (assignmentId, reason, userId, userRole = "") => 
     status: "REJECTED",
     reason: normalizedReason,
   }).catch(() => {});
+
+  // Real-time socket broadcast
+  try {
+    const io = getIO();
+    if (io) {
+      const payload = {
+        dutyId: assignment._id,
+        status: "REJECTED",
+        duty: populated,
+        reason: normalizedReason,
+        eventId: assignment.event,
+        staffId: assignment.staff,
+      };
+      io.to(`event:${assignment.event}`).emit("duty:updated", payload);
+      io.to(`event:${assignment.event}`).emit("duty:refresh", payload);
+      io.to(`staff:${assignment.staff}`).emit("duty:updated", payload);
+      io.emit("duty:updated", payload);
+      io.emit("duty:refresh", payload);
+    }
+  } catch (socketErr) {
+    console.warn("Socket broadcast error on rejectAssignment:", socketErr.message);
+  }
 
   return populated;
 };

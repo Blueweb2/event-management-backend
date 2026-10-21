@@ -201,6 +201,12 @@ const getEvents = async ({
   // Automatically cancel overdue events that were never started or completed
   await autoCancelOverdueUnstartedEvents();
 
+  // Automatically check out staff from ended events
+  const { autoCheckoutEndedEventsStaff } = require("./autoCheckout.service");
+  await autoCheckoutEndedEventsStaff().catch((err) =>
+    console.error("Auto-checkout error in getEvents:", err.message)
+  );
+
   const query = {};
 
   // ==========================================
@@ -359,6 +365,11 @@ const getEvents = async ({
 // ==========================================
 
 const getEventById = async (eventId) => {
+  const { autoCheckoutEndedEventsStaff } = require("./autoCheckout.service");
+  await autoCheckoutEndedEventsStaff().catch((err) =>
+    console.error("Auto-checkout error in getEventById:", err.message)
+  );
+
   const event = await Event.findById(eventId)
     .populate(
       "client",

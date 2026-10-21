@@ -2,6 +2,7 @@ const Attendance = require("../models/attendance.model");
 const Duty = require("../models/duty.model");
 const User = require("../models/user.model");
 const { normalizeDepartment } = require("../utils/department.constants");
+const { autoCheckoutEndedEventsStaff } = require("./autoCheckout.service");
 
 const isSuperAdmin = (requester) => {
   const r = (requester?.role || "").toLowerCase();
@@ -618,6 +619,11 @@ const getAttendance = async ({
   const currentPage = Math.max(Number(page) || 1, 1);
   const perPage = Math.min(Math.max(Number(limit) || 50, 1), 1000);
 
+  // Auto-checkout any staff whose event date/time has passed
+  await autoCheckoutEndedEventsStaff().catch((err) =>
+    console.error("Auto checkout error during getAttendance:", err.message)
+  );
+
   const query = {};
 
   if (requester) {
@@ -945,6 +951,11 @@ const getMyAttendance = async ({
   const currentPage = Math.max(Number(page) || 1, 1);
   const perPage = Math.min(Math.max(Number(limit) || 20, 1), 1000);
 
+  // Auto-checkout any staff whose event date/time has passed
+  await autoCheckoutEndedEventsStaff().catch((err) =>
+    console.error("Auto checkout error during getMyAttendance:", err.message)
+  );
+
   const query = { staff: staffId };
 
   if (status) query.status = status;
@@ -987,6 +998,11 @@ const getMyAttendance = async ({
 const getEventStaffAttendance = async (eventId) => {
   const Event = require("../models/event.model");
   const Duty = require("../models/duty.model");
+
+  // Auto-checkout any staff whose event date/time has passed
+  await autoCheckoutEndedEventsStaff().catch((err) =>
+    console.error("Auto checkout error during getEventStaffAttendance:", err.message)
+  );
 
   const eventRecord = await Event.findOne({
     $or: [{ _id: eventId }, { booking: eventId }],

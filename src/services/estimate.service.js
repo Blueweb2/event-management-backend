@@ -438,6 +438,39 @@ const getEstimateById = async (
 };
 
 // ==========================================
+// AUTO-CANCEL OVERDUE UNCONVERTED ESTIMATES
+// ==========================================
+
+const autoCancelOverdueEstimates = async () => {
+  try {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    // Any unconverted estimate whose eventDate < today and status is still pending/draft
+    const overdueEstimates = await Estimate.find({
+      eventDate: { $lt: todayStart },
+      convertedToEvent: { $ne: true },
+      status: { $in: ["DRAFT", "SENT", "VIEWED"] },
+    });
+
+    if (!overdueEstimates || overdueEstimates.length === 0) {
+      return 0;
+    }
+
+    const overdueIds = overdueEstimates.map((e) => e._id);
+    await Estimate.updateMany(
+      { _id: { $in: overdueIds } },
+      { $set: { status: "CANCELLED" } }
+    );
+
+    return overdueEstimates.length;
+  } catch (err) {
+    console.error("Error auto-cancelling overdue estimates:", err);
+    return 0;
+  }
+};
+
+// ==========================================
 // GET ESTIMATES
 // ==========================================
 
@@ -447,6 +480,9 @@ const getEstimates = async ({
   page = 1,
   limit = 20,
 }) => {
+  // Automatically cancel overdue estimates whose eventDate has passed without acceptance
+  await autoCancelOverdueEstimates();
+
   const filter = {};
 
   // ========================================
@@ -654,6 +690,25 @@ const convertEstimateToBooking = async (
   if (!estimate) {
     const error = new Error("Estimate not found");
     error.statusCode = 404;
+    throw error;
+  }
+
+  // ========================================
+  // Guard: Reject acceptance of date-over estimates
+  // ========================================
+
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+
+  if (
+    !estimate.convertedToEvent &&
+    estimate.eventDate &&
+    new Date(estimate.eventDate).getTime() < todayStart.getTime()
+  ) {
+    const error = new Error(
+      "Cannot accept estimate: scheduled event date has already passed"
+    );
+    error.statusCode = 400;
     throw error;
   }
 
@@ -1122,4 +1177,5 @@ module.exports = {
   updateEstimateStatus,
   convertEstimateToBooking,
   updateEstimate,
+  autoCancelOverdueEstimates,
 };
