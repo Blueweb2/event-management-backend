@@ -2,7 +2,10 @@ const { verifyToken } = require("../utils/jwt");
 
 const authenticate = async (req, res, next) => {
   try {
-    const authHeader = req.headers.authorization;
+    let authHeader = req.headers.authorization;
+    if ((!authHeader || typeof authHeader !== "string") && req.query && typeof req.query.token === "string") {
+      authHeader = `Bearer ${req.query.token.trim()}`;
+    }
 
     if (!authHeader || typeof authHeader !== "string") {
       return res.status(401).json({

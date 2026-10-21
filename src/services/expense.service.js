@@ -1,7 +1,25 @@
+const mongoose = require("mongoose");
 const Expense = require("../models/expense.model");
 const Event = require("../models/event.model");
 const Booking = require("../models/booking.model");
 const Duty = require("../models/duty.model");
+const User = require("../models/user.model");
+const path = require("path");
+const fs = require("fs");
+
+const categoryAliases = {
+  Catering: ["Catering", "Food"],
+  Food: ["Catering", "Food"],
+  "Equipment Rental": ["Equipment Rental", "Equipment"],
+  Equipment: ["Equipment Rental", "Equipment"],
+  Miscellaneous: ["Miscellaneous", "Other"],
+  Other: ["Miscellaneous", "Other"],
+  Transport: ["Transport"],
+  Decoration: ["Decoration"],
+  Staff: ["Staff"],
+  Venue: ["Venue"],
+  Cleaning: ["Cleaning"],
+};
 
 const calculateDutyDurationHours = (startTime, endTime) => {
   if (!startTime || !endTime) return 0;
@@ -28,17 +46,51 @@ const calculateDutyDurationHours = (startTime, endTime) => {
   return Number((diff / 60).toFixed(2));
 };
 
-const normalize = (data) => ({
-  title: String(data.title || "").trim(),
-  category: data.category,
-  amount: Number(data.amount),
-  event: String(data.event || "").trim(),
-  eventId: data.eventId || null,
-  date: String(data.date || "").trim(),
-  paymentMethod: data.paymentMethod,
-  status: data.status || "Pending",
-  description: String(data.description || "").trim(),
-});
+const normalize = async (data, file) => {
+  const result = {
+    title: String(data.title || "").trim(),
+    category: data.category,
+    amount: Number(data.amount),
+    event: String(data.event || "").trim(),
+    eventId: data.eventId || null,
+    date: String(data.date || "").trim(),
+    paymentMethod: data.paymentMethod,
+    status: data.status || "Pending",
+    description: String(data.description || "").trim(),
+    vendorName: String(data.vendorName || "").trim(),
+  };
+
+  // If eventId is provided, resolve event name if event name is missing
+  if (result.eventId && !result.event && mongoose.isValidObjectId(result.eventId)) {
+    const eventDoc = await Event.findById(result.eventId).select("eventName").lean();
+    if (eventDoc?.eventName) {
+      result.event = eventDoc.eventName;
+    }
+  }
+
+  // If event is an ObjectId string, map to eventId
+  if (!result.eventId && result.event && mongoose.isValidObjectId(result.event)) {
+    result.eventId = result.event;
+    const eventDoc = await Event.findById(result.event).select("eventName").lean();
+    if (eventDoc?.eventName) {
+      result.event = eventDoc.eventName;
+    }
+  }
+
+  if (file) {
+    result.receiptPath = file.filename;
+    result.receiptOriginalName = file.originalname || "";
+    result.receiptMimeType = file.mimetype || "";
+    result.receiptSize = file.size || 0;
+  } else if (data.removeReceipt === "true" || data.removeReceipt === true) {
+    result.receiptPath = "";
+    result.receiptOriginalName = "";
+    result.receiptMimeType = "";
+    result.receiptSize = 0;
+  }
+
+  return result;
+};
 
 const validate = (data) => {
   if (!data.title || !data.event || !data.date)
@@ -47,60 +99,173 @@ const validate = (data) => {
     throw new Error("Expense amount must be greater than zero");
 };
 
+const formatExpenseDoc = (doc) => {
+  if (!doc) return null;
+  const createdBy = doc.createdBy
+    ? (typeof doc.createdBy === "object" ? doc.createdBy : { _id: String(doc.createdBy) })
+    : null;
+  const createdByName = createdBy?.name || createdBy?.username || "";
+  return {
+    ...doc,
+    hasReceipt: Boolean(doc.receiptPath),
+    createdByName,
+  };
+};
+
 const getExpenses = async ({
   search = "",
   category = "",
   paymentMethod = "",
   status = "",
   eventId = "",
+  createdBy = "",
+  startDate = "",
+  endDate = "",
+  requester = null,
 } = {}) => {
-  const query = {};
-  if (category) query.category = category;
-  if (paymentMethod) query.paymentMethod = paymentMethod;
-  if (status) query.status = status;
-  if (eventId) {
-    query.$or = [{ eventId }, { event: eventId }];
+  const andConditions = [];
+
+  if (category && category !== "All") {
+    const mapped = categoryAliases[category] || [category];
+    andConditions.push({ category: { $in: mapped } });
+  }
+
+  if (paymentMethod && paymentMethod !== "All") {
+    andConditions.push({ paymentMethod });
+  }
+
+  if (status && status !== "All") {
+    andConditions.push({ status });
+  }
+
+  if (createdBy && createdBy !== "All") {
+    andConditions.push({ createdBy });
+  }
+
+  if (startDate || endDate) {
+    const dateQuery = {};
+    if (startDate) dateQuery.$gte = startDate;
+    if (endDate) dateQuery.$lte = endDate;
+    andConditions.push({ date: dateQuery });
+  }
+
+  if (eventId && eventId !== "All") {
+    if (mongoose.isValidObjectId(eventId)) {
+      const eventDoc = await Event.findById(eventId).select("eventName").lean();
+      const orClauses = [
+        { eventId: new mongoose.Types.ObjectId(eventId) },
+        { event: eventId },
+      ];
+      if (eventDoc && eventDoc.eventName) {
+        orClauses.push({ event: eventDoc.eventName });
+      }
+      andConditions.push({ $or: orClauses });
+    } else {
+      andConditions.push({
+        $or: [{ event: eventId }],
+      });
+    }
+  }
+
+  // Server-side authorization check:
+  // Staff members are constrained to expenses they recorded or events they have assignments for
+  const requesterRole = (requester?.role || "").toLowerCase();
+  if (requesterRole === "staff" && requester?.userId) {
+    const staffDuties = await Duty.find({ staff: requester.userId }).select("event").lean();
+    const assignedEventIds = staffDuties.map((d) => d.event).filter(Boolean);
+    const assignedEventDocs = await Event.find({ _id: { $in: assignedEventIds } }).select("eventName").lean();
+    const assignedEventNames = assignedEventDocs.map((e) => e.eventName);
+
+    andConditions.push({
+      $or: [
+        { createdBy: requester.userId },
+        { eventId: { $in: assignedEventIds } },
+        { event: { $in: assignedEventNames } },
+      ],
+    });
   }
 
   if (search.trim()) {
     const regex = new RegExp(search.trim(), "i");
-    const searchFilter = [
-      { title: regex },
-      { event: regex },
-      { category: regex },
-      { description: regex },
-    ];
-    if (query.$or) {
-      query.$and = [{ $or: query.$or }, { $or: searchFilter }];
-      delete query.$or;
-    } else {
-      query.$or = searchFilter;
+    andConditions.push({
+      $or: [
+        { title: regex },
+        { event: regex },
+        { category: regex },
+        { description: regex },
+        { vendorName: regex },
+      ],
+    });
+  }
+
+  const query = andConditions.length > 0 ? { $and: andConditions } : {};
+
+  const expenses = await Expense.find(query)
+    .populate("createdBy", "name username email role department")
+    .populate("eventId", "eventName eventDate location status")
+    .sort({ date: -1, createdAt: -1 })
+    .lean();
+
+  return expenses.map(formatExpenseDoc);
+};
+
+const createExpense = async (data, userId, file) => {
+  const payload = await normalize(data, file);
+  validate(payload);
+  const expense = await Expense.create({ ...payload, createdBy: userId });
+  const populated = await Expense.findById(expense._id)
+    .populate("createdBy", "name username email role department")
+    .populate("eventId", "eventName eventDate location status")
+    .lean();
+  return formatExpenseDoc(populated);
+};
+
+const updateExpense = async (id, data, userId, file) => {
+  const payload = await normalize(data, file);
+  validate(payload);
+
+  const existing = await Expense.findById(id);
+  if (!existing) throw new Error("Expense not found");
+
+  // If a new file is uploaded or receipt is removed, remove old file if present
+  if ((file || data.removeReceipt === "true" || data.removeReceipt === true) && existing.receiptPath) {
+    try {
+      const oldPath = path.join(__dirname, "../../uploads/receipts", existing.receiptPath);
+      if (fs.existsSync(oldPath)) {
+        fs.unlinkSync(oldPath);
+      }
+    } catch (err) {
+      console.warn("Could not remove old receipt file:", err.message);
     }
   }
 
-  return Expense.find(query).sort({ date: -1, createdAt: -1 }).lean();
-};
-
-const createExpense = async (data, userId) => {
-  const payload = normalize(data);
-  validate(payload);
-  return (await Expense.create({ ...payload, createdBy: userId })).toObject();
-};
-
-const updateExpense = async (id, data) => {
-  const payload = normalize(data);
-  validate(payload);
   const expense = await Expense.findByIdAndUpdate(id, payload, {
     new: true,
     runValidators: true,
-  }).lean();
-  if (!expense) throw new Error("Expense not found");
-  return expense;
+  })
+    .populate("createdBy", "name username email role department")
+    .populate("eventId", "eventName eventDate location status")
+    .lean();
+
+  return formatExpenseDoc(expense);
 };
 
 const deleteExpense = async (id) => {
-  const expense = await Expense.findByIdAndDelete(id);
+  const expense = await Expense.findById(id);
   if (!expense) throw new Error("Expense not found");
+
+  if (expense.receiptPath) {
+    try {
+      const filePath = path.join(__dirname, "../../uploads/receipts", expense.receiptPath);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    } catch (err) {
+      console.warn("Could not delete receipt file:", err.message);
+    }
+  }
+
+  await Expense.findByIdAndDelete(id);
   return { success: true, message: "Expense deleted successfully" };
 };
 
@@ -109,7 +274,10 @@ const toggleExpenseStatus = async (id) => {
   if (!expense) throw new Error("Expense not found");
   expense.status = expense.status === "Paid" ? "Pending" : "Paid";
   await expense.save();
-  return expense.toObject();
+  return Expense.findById(expense._id)
+    .populate("createdBy", "name username email role department")
+    .populate("eventId", "eventName eventDate location status")
+    .lean();
 };
 
 /**
@@ -336,6 +504,116 @@ const getEventProfitability = async (eventId) => {
   };
 };
 
+const getExpenseReceipt = async (id, requester) => {
+  const expense = await Expense.findById(id).lean();
+  if (!expense) {
+    const error = new Error("Expense not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (!expense.receiptPath) {
+    const error = new Error("No receipt attached to this expense");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const uploadDir = path.join(__dirname, "../../uploads/receipts");
+  const filePath = path.resolve(uploadDir, expense.receiptPath);
+
+  // Security guard against path traversal
+  if (!filePath.startsWith(uploadDir)) {
+    const error = new Error("Invalid receipt path");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  if (!fs.existsSync(filePath)) {
+    const error = new Error("Receipt file not found on disk");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const mimeType = expense.receiptMimeType || "application/octet-stream";
+  const originalName = expense.receiptOriginalName || path.basename(filePath);
+  const size = expense.receiptSize || 0;
+
+  return { filePath, mimeType, originalName, size };
+};
+
+const getExpenseCreators = async (eventId = null) => {
+  if (eventId && eventId !== "All") {
+    let eventConditions = [];
+    if (mongoose.isValidObjectId(eventId)) {
+      const eventDoc = await Event.findById(eventId).select("eventName").lean();
+      eventConditions = [
+        { eventId: new mongoose.Types.ObjectId(eventId) },
+        { event: eventId },
+      ];
+      if (eventDoc?.eventName) {
+        eventConditions.push({ event: eventDoc.eventName });
+      }
+    } else {
+      eventConditions = [{ event: eventId }];
+    }
+
+    const expenseCreatorIds = await Expense.distinct("createdBy", {
+      $or: eventConditions,
+      createdBy: { $ne: null },
+    });
+
+    const dutyStaffIds = mongoose.isValidObjectId(eventId)
+      ? await Duty.distinct("staff", { event: eventId })
+      : [];
+
+    const allowedUserIds = Array.from(
+      new Set([...expenseCreatorIds.map(String), ...dutyStaffIds.map(String)])
+    ).filter(Boolean);
+
+    const users = await User.find({
+      $or: [
+        { _id: { $in: allowedUserIds } },
+        { role: { $in: ["manager", "admin", "superadmin"] }, isActive: true },
+      ],
+    })
+      .select("name username email role department isActive")
+      .sort({ name: 1 })
+      .lean();
+
+    return users.map((u) => ({
+      id: u._id.toString(),
+      _id: u._id.toString(),
+      name: u.name || u.username,
+      username: u.username,
+      email: u.email,
+      role: u.role,
+      department: u.department,
+    }));
+  }
+
+  // Find all active staff, managers, and admins plus any users who have created an expense
+  const expenseCreatorIds = await Expense.distinct("createdBy", { createdBy: { $ne: null } });
+  const users = await User.find({
+    $or: [
+      { _id: { $in: expenseCreatorIds } },
+      { role: { $in: ["manager", "admin", "superadmin", "staff"] }, isActive: true },
+    ],
+  })
+    .select("name username email role department isActive")
+    .sort({ name: 1 })
+    .lean();
+
+  return users.map((u) => ({
+    id: u._id.toString(),
+    _id: u._id.toString(),
+    name: u.name || u.username,
+    username: u.username,
+    email: u.email,
+    role: u.role,
+    department: u.department,
+  }));
+};
+
 module.exports = {
   getExpenses,
   createExpense,
@@ -343,4 +621,6 @@ module.exports = {
   deleteExpense,
   toggleExpenseStatus,
   getEventProfitability,
+  getExpenseReceipt,
+  getExpenseCreators,
 };
