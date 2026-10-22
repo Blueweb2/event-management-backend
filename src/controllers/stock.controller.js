@@ -6,7 +6,7 @@ const stockService = require("../services/stock.service");
 
 const createStockItem = async (req, res, next) => {
   try {
-    const item = await stockService.createStockItem(req.body, req.user.userId);
+    const item = await stockService.createStockItem(req.body, req.user);
     res.status(201).json({
       success: true,
       message: "Stock item created successfully",
@@ -19,7 +19,7 @@ const createStockItem = async (req, res, next) => {
 
 const getStockItems = async (req, res, next) => {
   try {
-    const data = await stockService.getStockItems(req.query);
+    const data = await stockService.getStockItems(req.query, req.user);
     res.status(200).json({
       success: true,
       data: data.items,
@@ -48,7 +48,7 @@ const getRentableStockItems = async (req, res, next) => {
 
 const getStockItemById = async (req, res, next) => {
   try {
-    const data = await stockService.getStockItemById(req.params.id);
+    const data = await stockService.getStockItemById(req.params.id, req.user);
     res.status(200).json({
       success: true,
       data: data.item,
@@ -62,7 +62,7 @@ const getStockItemById = async (req, res, next) => {
 
 const updateStockItem = async (req, res, next) => {
   try {
-    const item = await stockService.updateStockItem(req.params.id, req.body, req.user.userId);
+    const item = await stockService.updateStockItem(req.params.id, req.body, req.user);
     res.status(200).json({
       success: true,
       message: "Stock item updated successfully",
@@ -75,7 +75,7 @@ const updateStockItem = async (req, res, next) => {
 
 const addStock = async (req, res, next) => {
   try {
-    const item = await stockService.addStock(req.params.id, req.body, req.user.userId);
+    const item = await stockService.addStock(req.params.id, req.body, req.user);
     res.status(200).json({
       success: true,
       message: "Stock added successfully",
@@ -88,7 +88,7 @@ const addStock = async (req, res, next) => {
 
 const adjustInventory = async (req, res, next) => {
   try {
-    const item = await stockService.adjustInventory(req.params.id, req.body, req.user.userId);
+    const item = await stockService.adjustInventory(req.params.id, req.body, req.user);
     res.status(200).json({
       success: true,
       message: "Inventory adjusted successfully",
@@ -101,7 +101,7 @@ const adjustInventory = async (req, res, next) => {
 
 const deleteStockItem = async (req, res, next) => {
   try {
-    await stockService.deleteStockItem(req.params.id);
+    await stockService.deleteStockItem(req.params.id, req.user);
     res.status(200).json({
       success: true,
       message: "Stock item deleted successfully",
@@ -133,7 +133,7 @@ const addEventStockRequirement = async (req, res, next) => {
     const allocation = await stockService.addEventStockRequirement(
       req.params.eventId,
       req.body,
-      req.user.userId
+      req.user
     );
     res.status(201).json({
       success: true,
@@ -285,7 +285,7 @@ const reportDiscrepancy = async (req, res, next) => {
 
 const getStockTransactions = async (req, res, next) => {
   try {
-    const data = await stockService.getStockTransactions(req.query);
+    const data = await stockService.getStockTransactions(req.query, req.user);
     res.status(200).json({
       success: true,
       data: data.transactions,
@@ -315,7 +315,7 @@ const getStaffStockSummary = async (req, res, next) => {
 
 const getManagerStockDashboardSummary = async (req, res, next) => {
   try {
-    const summary = await stockService.getManagerStockDashboardSummary();
+    const summary = await stockService.getManagerStockDashboardSummary(req.user);
     res.status(200).json({
       success: true,
       data: summary,

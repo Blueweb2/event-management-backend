@@ -182,7 +182,7 @@ router.put(
 router.post(
   "/items/:id/add",
   authenticate,
-  authorize("admin", "manager"),
+  authorize("admin", "manager", "staff"),
   addStock
 );
 

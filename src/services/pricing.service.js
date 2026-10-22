@@ -279,9 +279,19 @@ const calculateServicesTotal = async ({
       // Check if this is a rentable stock item
       const stockItem = await StockItem.findById(serviceId);
       if (stockItem) {
-        if (stockItem.isRentable === false) {
+        const KITCHEN_CATEGORIES = [
+          "Raw Ingredients",
+          "Kitchen Supplies",
+          "Kitchen Equipment",
+        ];
+        if (
+          stockItem.isRentable === false ||
+          !stockItem.isRentable ||
+          stockItem.stockType === "kitchen" ||
+          KITCHEN_CATEGORIES.includes(stockItem.category)
+        ) {
           throw new Error(
-            `Equipment "${stockItem.name}" is not available for rental`,
+            `Item "${stockItem.name}" is internal kitchen inventory or not rentable and cannot be booked for rental`,
           );
         }
 

@@ -905,6 +905,26 @@ const updateDepartmentTaskStatus = async (dutyId, taskId, { status, notes, userI
   return task;
 };
 
+const deleteDepartmentTask = async (dutyId, taskId) => {
+  const duty = await Duty.findById(dutyId);
+  if (!duty) {
+    const error = new Error("Duty not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const task = duty.tasks.id(taskId);
+  if (!task) {
+    const error = new Error("Task not found in duty");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  duty.tasks.pull(taskId);
+  await duty.save();
+  return { message: "Task deleted successfully", taskId };
+};
+
 // ==========================================
 // 5. DECORATION WORKFLOW
 // ==========================================
@@ -1117,6 +1137,7 @@ module.exports = {
   getDepartmentTasks,
   createDepartmentTask,
   updateDepartmentTaskStatus,
+  deleteDepartmentTask,
   getDecorationEvents,
   getDecorationMaterials,
   getPhotographyEvents,

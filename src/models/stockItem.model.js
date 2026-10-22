@@ -22,9 +22,20 @@ const stockItemSchema = new mongoose.Schema(
         "Kitchen Equipment",
         "Decor",
         "Lighting",
+        "Raw Ingredients",
+        "Kitchen Supplies",
         "Other",
       ],
       default: "Other",
+    },
+    stockType: {
+      type: String,
+      enum: ["kitchen", "rentable"],
+      default: function () {
+        return ["Raw Ingredients", "Kitchen Supplies", "Kitchen Equipment"].includes(this.category)
+          ? "kitchen"
+          : "rentable";
+      },
     },
     totalQuantity: {
       type: Number,
@@ -81,7 +92,7 @@ const stockItemSchema = new mongoose.Schema(
     },
     isRentable: {
       type: Boolean,
-      default: true,
+      default: false,
     },
     location: {
       type: String,
@@ -111,9 +122,37 @@ const stockItemSchema = new mongoose.Schema(
   }
 );
 
+stockItemSchema.pre("validate", function () {
+  const KITCHEN_CATEGORIES = [
+    "Raw Ingredients",
+    "Kitchen Supplies",
+    "Kitchen Equipment",
+  ];
+  const isKitchen =
+    this.stockType === "kitchen" || KITCHEN_CATEGORIES.includes(this.category);
+
+  if (isKitchen) {
+    if (this.isRentable === true) {
+      throw new Error(
+        `Kitchen stock items (${this.category || "Kitchen"}) are for internal kitchen use only and cannot be marked as rentable.`
+      );
+    }
+    this.stockType = "kitchen";
+    this.isRentable = false;
+    this.rentalPrice = 0;
+  } else {
+    this.stockType = "rentable";
+    if (this.isRentable === undefined || this.isRentable === null) {
+      this.isRentable = false;
+    }
+  }
+});
+
 stockItemSchema.index({ name: 1 });
 stockItemSchema.index({ category: 1 });
+stockItemSchema.index({ stockType: 1 });
 stockItemSchema.index({ availableQuantity: 1 });
 stockItemSchema.index({ isRentable: 1 });
+stockItemSchema.index({ stockType: 1, isRentable: 1 });
 
 module.exports = mongoose.model("StockItem", stockItemSchema);

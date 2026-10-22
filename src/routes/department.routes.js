@@ -16,6 +16,7 @@ const {
   getKitchenTasks,
   createKitchenTask,
   updateKitchenTaskStatus,
+  deleteKitchenTask,
   getDecorationEvents,
   getDecorationMaterials,
   createDecorationPurchaseRequest,
@@ -149,6 +150,13 @@ router.patch(
   authenticate,
   requireDepartmentAccess("Kitchen"),
   updateKitchenTaskStatus
+);
+
+router.delete(
+  "/kitchen/tasks/:dutyId/:taskId",
+  authenticate,
+  requireDepartmentAccess("Kitchen"),
+  deleteKitchenTask
 );
 
 // ==========================================

@@ -6,6 +6,12 @@ const StockTransaction = require("../models/stockTransaction.model");
 const Event = require("../models/event.model");
 const User = require("../models/user.model");
 const { getIO } = require("../socket");
+const {
+  KITCHEN_CATEGORIES,
+  isKitchenStockItem,
+  isAuthorizedForKitchenStock,
+  isManagerOrAdmin,
+} = require("../utils/stockAuth");
 
 // Helper to safely emit socket events if available
 const emitStockEvent = (eventName, data) => {
@@ -124,12 +130,73 @@ const findAllocation = async (eventStockId, stockItemId = null, session = null) 
 };
 
 /**
+ * Helper to resolve a user object from a user object, string, or ObjectId
+ */
+const resolveUser = async (userOrId) => {
+  if (!userOrId) return null;
+  if (
+    typeof userOrId === "object" &&
+    (userOrId.role !== undefined || userOrId.department !== undefined)
+  ) {
+    return userOrId;
+  }
+  const id =
+    userOrId._id ||
+    userOrId.userId ||
+    (mongoose.Types.ObjectId.isValid(userOrId) ? userOrId : null);
+  if (id) {
+    try {
+      const dbUser = await User.findById(id).lean();
+      if (dbUser) return dbUser;
+    } catch (e) {
+      // Fallback
+    }
+  }
+  if (typeof userOrId === "object") return userOrId;
+  return { _id: userOrId, role: "manager" };
+};
+
+/**
  * ==========================================
  * MASTER STOCK ITEM CRUD (Manager)
  * ==========================================
  */
 
-const createStockItem = async (data, userId) => {
+const createStockItem = async (data, userOrId) => {
+  const isKitchen = isKitchenStockItem(data);
+
+  // 1. Business validation: Kitchen items can NEVER be marked as rentable (400 Bad Request)
+  if (isKitchen && (data.isRentable === true || data.isRentable === "true")) {
+    const error = new Error(
+      `Kitchen stock items (${data.category || "Kitchen"}) are for internal kitchen use only and cannot be marked as rentable.`
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const user = await resolveUser(userOrId);
+  const userId = user?._id || user?.userId || userOrId;
+
+  // 2. Role check: staff cannot create master stock items
+  if (user?.role === "staff") {
+    const error = new Error("Access denied: Staff members cannot perform master stock creation.");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  // 3. Department authorization check: Unrelated departments cannot create kitchen items
+  if (isKitchen && user && !isAuthorizedForKitchenStock(user)) {
+    const error = new Error("Access denied: Only authorized kitchen managers or superadmin can create kitchen inventory items.");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  if (isKitchen) {
+    data.stockType = "kitchen";
+    data.isRentable = false;
+    data.rentalPrice = 0;
+  }
+
   const total = validateNonNegativeInteger(data.totalQuantity !== undefined ? data.totalQuantity : 0, "Total quantity");
   const available = total; // Initial available equals total
 
@@ -162,12 +229,48 @@ const createStockItem = async (data, userId) => {
   return item;
 };
 
-const getStockItems = async (query = {}) => {
-  const { search, category, lowStock, isRentable, rentable, page = 1, limit = 100 } = query;
+const getStockItems = async (query = {}, userOrId = null) => {
+  const { search, category, lowStock, isRentable, rentable, stockType, page = 1, limit = 100 } = query;
   const filter = {};
 
-  if (category && category !== "ALL") {
-    filter.category = category;
+  const user = await resolveUser(userOrId);
+  const isAuthorizedKitchen = user ? isAuthorizedForKitchenStock(user) : true;
+
+  // Check if query is explicitly requesting kitchen inventory
+  const requestsKitchen =
+    stockType === "kitchen" ||
+    (category && category !== "ALL" && KITCHEN_CATEGORIES.includes(category));
+
+  if (requestsKitchen && user && !isAuthorizedKitchen) {
+    const error = new Error(
+      "Access denied: Kitchen inventory is restricted to authorized kitchen personnel."
+    );
+    error.statusCode = 403;
+    throw error;
+  }
+
+  if (user && !isAuthorizedKitchen) {
+    // Strictly isolate: unrelated departments can NEVER see kitchen inventory
+    filter.stockType = { $ne: "kitchen" };
+    filter.category = { $nin: KITCHEN_CATEGORIES };
+    if (category && category !== "ALL") {
+      filter.category = category;
+    }
+  } else {
+    // Authorized user or system call without user context
+    if (category && category !== "ALL") {
+      filter.category = category;
+    }
+
+    if (stockType === "kitchen") {
+      filter.$or = [
+        { stockType: "kitchen" },
+        { category: { $in: KITCHEN_CATEGORIES } },
+      ];
+    } else if (stockType === "rentable") {
+      filter.stockType = { $ne: "kitchen" };
+      filter.category = { $nin: KITCHEN_CATEGORIES };
+    }
   }
 
   if (search && search.trim()) {
@@ -175,7 +278,9 @@ const getStockItems = async (query = {}) => {
   }
 
   if (isRentable === "true" || isRentable === true || rentable === "true" || rentable === true) {
-    filter.isRentable = { $ne: false };
+    filter.isRentable = true;
+    filter.stockType = { $ne: "kitchen" };
+    filter.category = { $nin: KITCHEN_CATEGORIES };
   }
 
   const items = await StockItem.find(filter)
@@ -203,7 +308,9 @@ const getStockItems = async (query = {}) => {
 const getRentableStockItems = async (query = {}) => {
   const { search, category } = query;
   const filter = {
-    isRentable: { $ne: false },
+    isRentable: true,
+    stockType: { $ne: "kitchen" },
+    category: { $nin: KITCHEN_CATEGORIES },
     availableQuantity: { $gt: 0 },
   };
 
@@ -217,13 +324,13 @@ const getRentableStockItems = async (query = {}) => {
 
   const items = await StockItem.find(filter)
     .sort({ name: 1 })
-    .select("_id name category totalQuantity availableQuantity unit unitPrice rentalPrice location description isRentable")
+    .select("_id name category totalQuantity availableQuantity unit unitPrice rentalPrice location description isRentable stockType")
     .lean();
 
   return items;
 };
 
-const getStockItemById = async (id) => {
+const getStockItemById = async (id, userOrId = null) => {
   const item = await StockItem.findById(id)
     .populate("createdBy", "name email")
     .populate("updatedBy", "name email");
@@ -231,6 +338,17 @@ const getStockItemById = async (id) => {
   if (!item) {
     const error = new Error("Stock item not found");
     error.statusCode = 404;
+    throw error;
+  }
+
+  const user = await resolveUser(userOrId);
+
+  // Authorization check: Unrelated departments are forbidden from accessing kitchen inventory
+  if (isKitchenStockItem(item) && user && !isAuthorizedForKitchenStock(user)) {
+    const error = new Error(
+      "Access denied: Kitchen inventory is restricted to authorized kitchen personnel."
+    );
+    error.statusCode = 403;
     throw error;
   }
 
@@ -253,11 +371,50 @@ const getStockItemById = async (id) => {
   };
 };
 
-const updateStockItem = async (id, data, userId) => {
+const updateStockItem = async (id, data, userOrId) => {
   const item = await StockItem.findById(id);
   if (!item) {
     const error = new Error("Stock item not found");
     error.statusCode = 404;
+    throw error;
+  }
+
+  const isCurrentKitchen = isKitchenStockItem(item);
+  const targetCategory = data.category !== undefined ? data.category : item.category;
+  const targetStockType = data.stockType !== undefined ? data.stockType : item.stockType;
+  const isTargetKitchen =
+    targetStockType === "kitchen" || KITCHEN_CATEGORIES.includes(targetCategory);
+
+  const isRequestingRentable =
+    data.isRentable === true ||
+    data.isRentable === "true" ||
+    (data.isRentable === undefined && item.isRentable);
+
+  // 1. Business validation: Kitchen items can NEVER be marked as rentable (400 Bad Request)
+  if (isTargetKitchen && isRequestingRentable) {
+    const error = new Error(
+      `Kitchen stock items (${targetCategory}) are for internal kitchen use only and cannot be marked as rentable.`
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const user = await resolveUser(userOrId);
+  const userId = user?._id || user?.userId || userOrId;
+
+  // 2. Role check: Staff cannot perform master stock updates
+  if (user?.role === "staff") {
+    const error = new Error("Access denied: Staff members cannot perform master stock updates.");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  // 3. Department authorization check
+  if ((isCurrentKitchen || isTargetKitchen) && user && !isAuthorizedForKitchenStock(user)) {
+    const error = new Error(
+      "Access denied: You are not authorized to modify kitchen stock items."
+    );
+    error.statusCode = 403;
     throw error;
   }
 
@@ -269,6 +426,12 @@ const updateStockItem = async (id, data, userId) => {
   delete data.damagedQuantity;
   delete data.lostQuantity;
 
+  if (isTargetKitchen) {
+    data.stockType = "kitchen";
+    data.isRentable = false;
+    data.rentalPrice = 0;
+  }
+
   Object.assign(item, data, { updatedBy: userId });
   await item.save();
 
@@ -276,7 +439,9 @@ const updateStockItem = async (id, data, userId) => {
   return item;
 };
 
-const addStock = async (id, { quantity, notes }, userId) => {
+const addStock = async (id, { quantity, notes }, userOrId) => {
+  const user = await resolveUser(userOrId);
+  const userId = user?._id || user?.userId || userOrId;
   const addQty = validatePositiveInteger(quantity, "Quantity to add");
 
   return await runInTransaction(async (session) => {
@@ -285,6 +450,26 @@ const addStock = async (id, { quantity, notes }, userId) => {
       const error = new Error("Stock item not found");
       error.statusCode = 404;
       throw error;
+    }
+
+    const isKitchen = isKitchenStockItem(item);
+
+    if (isKitchen) {
+      if (user && !isAuthorizedForKitchenStock(user)) {
+        const error = new Error(
+          "Access denied: You are not authorized to restock kitchen inventory."
+        );
+        error.statusCode = 403;
+        throw error;
+      }
+    } else {
+      if (user?.role === "staff") {
+        const error = new Error(
+          "Access denied: Staff members cannot perform stock-in on non-kitchen assets."
+        );
+        error.statusCode = 403;
+        throw error;
+      }
     }
 
     const prevTotal = item.totalQuantity;
@@ -317,7 +502,16 @@ const addStock = async (id, { quantity, notes }, userId) => {
   });
 };
 
-const adjustInventory = async (id, { newTotal, newAvailable, damaged, lost, reason }, userId) => {
+const adjustInventory = async (id, { newTotal, newAvailable, damaged, lost, reason }, userOrId) => {
+  const user = await resolveUser(userOrId);
+  const userId = user?._id || user?.userId || userOrId;
+
+  if (user?.role === "staff") {
+    const error = new Error("Access denied: Staff members cannot perform inventory adjustments.");
+    error.statusCode = 403;
+    throw error;
+  }
+
   if (!reason || !reason.trim()) {
     const error = new Error("Adjustment reason is required for audit trail");
     error.statusCode = 400;
@@ -329,6 +523,14 @@ const adjustInventory = async (id, { newTotal, newAvailable, damaged, lost, reas
     if (!item) {
       const error = new Error("Stock item not found");
       error.statusCode = 404;
+      throw error;
+    }
+
+    if (isKitchenStockItem(item) && user && !isAuthorizedForKitchenStock(user)) {
+      const error = new Error(
+        "Access denied: You are not authorized to adjust kitchen inventory."
+      );
+      error.statusCode = 403;
       throw error;
     }
 
@@ -373,11 +575,25 @@ const adjustInventory = async (id, { newTotal, newAvailable, damaged, lost, reas
   });
 };
 
-const deleteStockItem = async (id) => {
+const deleteStockItem = async (id, userOrId = null) => {
+  const user = await resolveUser(userOrId);
+
+  if (user?.role === "staff") {
+    const error = new Error("Access denied: Staff members cannot delete master stock items.");
+    error.statusCode = 403;
+    throw error;
+  }
+
   const item = await StockItem.findById(id);
   if (!item) {
     const error = new Error("Stock item not found");
     error.statusCode = 404;
+    throw error;
+  }
+
+  if (isKitchenStockItem(item) && user && !isAuthorizedForKitchenStock(user)) {
+    const error = new Error("Access denied: You are not authorized to delete kitchen stock items.");
+    error.statusCode = 403;
     throw error;
   }
 
@@ -400,7 +616,7 @@ const deleteStockItem = async (id) => {
  * ==========================================
  */
 
-const getEventStock = async (eventId, user) => {
+const getEventStock = async (eventId, userOrId = null) => {
   const event = await Event.findById(eventId).populate("client", "name email phone");
   if (!event) {
     const error = new Error("Event not found");
@@ -408,11 +624,12 @@ const getEventStock = async (eventId, user) => {
     throw error;
   }
 
+  const user = await resolveUser(userOrId);
   const filter = { event: eventId };
 
   // If staff user, only return stock allocated to this staff
-  if (user && user.role === "staff") {
-    filter.assignedStaff = user.userId;
+  if (user?.role === "staff") {
+    filter.assignedStaff = user._id || user.userId;
   }
 
   const allocations = await EventStock.find(filter)
@@ -422,13 +639,23 @@ const getEventStock = async (eventId, user) => {
     .populate("verifiedBy", "name email")
     .sort({ createdAt: -1 });
 
+  // If user is not authorized for kitchen stock, hide kitchen allocations
+  let filteredAllocations = allocations;
+  if (user && !isAuthorizedForKitchenStock(user)) {
+    filteredAllocations = allocations.filter(
+      (alloc) => alloc.stockItem && !isKitchenStockItem(alloc.stockItem)
+    );
+  }
+
   return {
     event,
-    allocations,
+    allocations: filteredAllocations,
   };
 };
 
-const addEventStockRequirement = async (eventId, { stockItemId, requiredQuantity, autoReserve = true, assignedStaff }, userId) => {
+const addEventStockRequirement = async (eventId, { stockItemId, requiredQuantity, autoReserve = true, assignedStaff }, userOrId) => {
+  const user = await resolveUser(userOrId);
+  const userId = user?._id || user?.userId || userOrId;
   const qty = validatePositiveInteger(requiredQuantity, "Required quantity");
 
   return await runInTransaction(async (session) => {
@@ -443,6 +670,15 @@ const addEventStockRequirement = async (eventId, { stockItemId, requiredQuantity
     if (!stockItem) {
       const error = new Error("Stock item not found");
       error.statusCode = 404;
+      throw error;
+    }
+
+    // Unrelated departments cannot allocate kitchen stock items
+    if (isKitchenStockItem(stockItem) && user && !isAuthorizedForKitchenStock(user)) {
+      const error = new Error(
+        "Access denied: Unrelated department managers cannot allocate kitchen stock items."
+      );
+      error.statusCode = 403;
       throw error;
     }
 
@@ -691,7 +927,9 @@ const getStaffAssignedStock = async (staffId, query = {}) => {
   };
 };
 
-const takeStock = async (eventStockId, { takenQuantity, takeNotes, expectedReturnAt, stockItemId }, user) => {
+const takeStock = async (eventStockId, { takenQuantity, takeNotes, expectedReturnAt, stockItemId }, userOrId) => {
+  const user = await resolveUser(userOrId);
+
   return await runInTransaction(async (session) => {
     const allocation = await findAllocation(eventStockId, stockItemId, session);
 
@@ -702,9 +940,9 @@ const takeStock = async (eventStockId, { takenQuantity, takeNotes, expectedRetur
     }
 
     // Verify staff authorization
-    if (user.role !== "manager" && user.role !== "admin") {
+    if (user?.role !== "manager" && user?.role !== "admin") {
       const assignedId = String(allocation.assignedStaff?._id || allocation.assignedStaff || "");
-      const currentUserId = String(user.userId || user._id || user || "");
+      const currentUserId = String(user?.userId || user?._id || "");
       if (assignedId !== currentUserId) {
         const error = new Error("You are not authorized to take stock assigned to another staff member");
         error.statusCode = 403;
@@ -745,6 +983,12 @@ const takeStock = async (eventStockId, { takenQuantity, takeNotes, expectedRetur
     if (!stockItem) {
       const error = new Error("Stock item not found in master inventory");
       error.statusCode = 404;
+      throw error;
+    }
+
+    if (isKitchenStockItem(stockItem) && user && !isAuthorizedForKitchenStock(user)) {
+      const error = new Error("Access denied: You are not authorized to collect kitchen stock.");
+      error.statusCode = 403;
       throw error;
     }
 
@@ -986,7 +1230,8 @@ const returnStock = async (
  * ==========================================
  */
 
-const holdStock = async ({ stockItemId, quantity, eventId, notes, expectedReturnAt }, user) => {
+const holdStock = async ({ stockItemId, quantity, eventId, notes, expectedReturnAt }, userOrId) => {
+  const user = await resolveUser(userOrId);
   const qty = validatePositiveInteger(quantity, "Hold quantity");
 
   return await runInTransaction(async (session) => {
@@ -994,6 +1239,12 @@ const holdStock = async ({ stockItemId, quantity, eventId, notes, expectedReturn
     if (!stockItem) {
       const error = new Error("Stock item not found");
       error.statusCode = 404;
+      throw error;
+    }
+
+    if (isKitchenStockItem(stockItem) && user && !isAuthorizedForKitchenStock(user)) {
+      const error = new Error("Access denied: You are not authorized to hold kitchen stock items.");
+      error.statusCode = 403;
       throw error;
     }
 
@@ -1418,11 +1669,32 @@ const reportDiscrepancy = async (eventStockId, { discrepancyNotes, notes: altNot
  * ==========================================
  */
 
-const getStockTransactions = async (query = {}) => {
+const getStockTransactions = async (query = {}, userOrId = null) => {
   const { stockItemId, eventId, type, page = 1, limit = 50 } = query;
   const filter = {};
 
-  if (stockItemId) filter.stockItem = stockItemId;
+  const user = await resolveUser(userOrId);
+  const isAuthorizedKitchen = user ? isAuthorizedForKitchenStock(user) : true;
+
+  if (stockItemId) {
+    const stockItem = await StockItem.findById(stockItemId);
+    if (stockItem && isKitchenStockItem(stockItem) && user && !isAuthorizedKitchen) {
+      const error = new Error(
+        "Access denied: Kitchen inventory transactions are restricted to authorized kitchen personnel."
+      );
+      error.statusCode = 403;
+      throw error;
+    }
+    filter.stockItem = stockItemId;
+  } else if (user && !isAuthorizedKitchen) {
+    // Hide transactions of kitchen stock items from unauthorized users
+    const kitchenItems = await StockItem.find({
+      $or: [{ stockType: "kitchen" }, { category: { $in: KITCHEN_CATEGORIES } }],
+    }).select("_id").lean();
+    const kitchenIds = kitchenItems.map((k) => k._id);
+    filter.stockItem = { $nin: kitchenIds };
+  }
+
   if (eventId) filter.event = eventId;
   if (type && type !== "ALL") filter.type = type;
 
@@ -1430,7 +1702,7 @@ const getStockTransactions = async (query = {}) => {
     .sort({ createdAt: -1 })
     .skip((Number(page) - 1) * Number(limit))
     .limit(Number(limit))
-    .populate("stockItem", "name category unit")
+    .populate("stockItem", "name category unit stockType")
     .populate("event", "eventName eventDate location")
     .populate("performedBy", "name email role");
 
@@ -1485,9 +1757,16 @@ const getStaffStockSummary = async (staffId) => {
   };
 };
 
-const getManagerStockSummary = async () => {
-  const totalItems = await StockItem.countDocuments();
+const getManagerStockSummary = async (userOrId = null) => {
+  const user = await resolveUser(userOrId);
+  const isAuthorizedKitchen = user ? isAuthorizedForKitchenStock(user) : true;
+  const stockFilter = (user && !isAuthorizedKitchen)
+    ? { stockType: { $ne: "kitchen" }, category: { $nin: KITCHEN_CATEGORIES } }
+    : {};
+
+  const totalItems = await StockItem.countDocuments(stockFilter);
   const lowStockItems = await StockItem.find({
+    ...stockFilter,
     $expr: { $lte: ["$availableQuantity", "$minStockLevel"] },
   }).limit(10);
 

@@ -50,7 +50,7 @@ const authenticate = async (req, res, next) => {
       const dbUser = await User.findById(decoded.userId).select("role department permissions isActive name email");
       if (dbUser) {
         if (!dbUser.isActive) {
-          return res.status(401).json({
+          return res.status(403).json({
             success: false,
             message: "Account has been deactivated",
           });

@@ -209,6 +209,20 @@ const updateKitchenTaskStatus = async (req, res, next) => {
   }
 };
 
+const deleteKitchenTask = async (req, res, next) => {
+  try {
+    const { dutyId, taskId } = req.params;
+    const result = await departmentWorkflowService.deleteDepartmentTask(dutyId, taskId);
+    res.status(200).json({
+      success: true,
+      message: "Kitchen task deleted successfully",
+      data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // ==========================================
 // Decoration Controllers
 // ==========================================
@@ -386,6 +400,7 @@ module.exports = {
   getKitchenTasks,
   createKitchenTask,
   updateKitchenTaskStatus,
+  deleteKitchenTask,
   getDecorationEvents,
   getDecorationMaterials,
   createDecorationPurchaseRequest,
