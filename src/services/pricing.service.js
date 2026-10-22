@@ -520,6 +520,7 @@ const calculateEstimateTotal = ({
   discountType = "percentage",
   discountValue = 0,
   additionalCharges = 0,
+  gstEnabled = true,
 }) => {
   const safeSubtotal =
     Number(subtotal);
@@ -583,12 +584,14 @@ const calculateEstimateTotal = ({
     );
 
   // ========================================
-  // GST
+  // GST (Optional per estimate/booking)
   // ========================================
 
-  const gstAmount =
-    taxableAmount *
-    (GST_RATE / 100);
+  const isGstActive = gstEnabled !== false;
+
+  const gstAmount = isGstActive
+    ? taxableAmount * (GST_RATE / 100)
+    : 0;
 
   // ========================================
   // Grand total
@@ -625,6 +628,9 @@ const calculateEstimateTotal = ({
       roundMoney(
         taxableAmount,
       ),
+
+    gstEnabled:
+      isGstActive,
 
     gstRate:
       GST_RATE,

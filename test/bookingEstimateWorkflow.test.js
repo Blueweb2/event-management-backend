@@ -844,4 +844,568 @@ test.describe("Booking & Estimate Management Workflow & RBAC Security Suite", ()
     const updatedEst = await Estimate.findById(est._id);
     assert.strictEqual(updatedEst.status, "CANCELLED", "Past date unconverted estimate must be auto-cancelled");
   });
+
+  test("11. Optional GST Toggle: Calculations, Persistence, Editing, and Conversion Workflows", async () => {
+    const futureDate = new Date(Date.now() + 86400000 * 25).toISOString();
+
+    // 1. Create Estimate with GST ON
+    // Subtotal: 15,000 | Discount: 10% (1,500) | Taxable: 13,500 | GST 18%: 2,430 | Addl: 500 | Total: 16,430
+    const estOnRes = await fetch(`${baseUrl}/estimates`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${managerToken}`,
+      },
+      body: JSON.stringify({
+        eventName: "GST Enabled Corporate Gala",
+        eventType: "Corporate",
+        eventDate: futureDate,
+        eventTime: "18:00",
+        guests: 100,
+        location: "Grand Ballroom",
+        description: "GST ON verification",
+        client: {
+          name: "GST On Client",
+          phone: "9876543211",
+          email: "gston@example.com",
+        },
+        services: [
+          {
+            serviceId: testService._id,
+            quantity: 1,
+          },
+        ],
+        discountType: "percentage",
+        discountValue: 10,
+        additionalCharges: 500,
+        gstEnabled: true,
+      }),
+    });
+    assert.strictEqual(estOnRes.status, 201);
+    const estOnBody = await estOnRes.json();
+    const estOn = estOnBody.data;
+    createdEstimateIds.push(estOn._id);
+
+    assert.strictEqual(estOn.gstEnabled, true);
+    assert.strictEqual(estOn.subtotal, 15000);
+    assert.strictEqual(estOn.discount, 1500);
+    assert.strictEqual(estOn.additionalCharges, 500);
+    assert.strictEqual(estOn.gstAmount, 2430);
+    assert.strictEqual(estOn.total, 16430);
+
+    // 2. Create Estimate with GST OFF
+    // Subtotal: 15,000 | Discount: 10% (1,500) | Taxable: 13,500 | GST: 0 | Addl: 500 | Total: 14,000
+    const estOffRes = await fetch(`${baseUrl}/estimates`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${managerToken}`,
+      },
+      body: JSON.stringify({
+        eventName: "GST Disabled Non-Profit Event",
+        eventType: "Charity",
+        eventDate: futureDate,
+        eventTime: "19:00",
+        guests: 100,
+        location: "Community Hall",
+        description: "GST OFF verification",
+        client: {
+          name: "GST Off Client",
+          phone: "9876543212",
+          email: "gstoff@example.com",
+        },
+        services: [
+          {
+            serviceId: testService._id,
+            quantity: 1,
+          },
+        ],
+        discountType: "percentage",
+        discountValue: 10,
+        additionalCharges: 500,
+        gstEnabled: false,
+      }),
+    });
+    assert.strictEqual(estOffRes.status, 201);
+    const estOffBody = await estOffRes.json();
+    const estOff = estOffBody.data;
+    createdEstimateIds.push(estOff._id);
+
+    assert.strictEqual(estOff.gstEnabled, false);
+    assert.strictEqual(estOff.subtotal, 15000);
+    assert.strictEqual(estOff.discount, 1500);
+    assert.strictEqual(estOff.additionalCharges, 500);
+    assert.strictEqual(estOff.gstAmount, 0);
+    assert.strictEqual(estOff.total, 14000);
+
+    // 3. Validation: Reject non-boolean gstEnabled
+    const invalidGstRes = await fetch(`${baseUrl}/estimates`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${managerToken}`,
+      },
+      body: JSON.stringify({
+        eventName: "Invalid GST Value Event",
+        eventType: "Social",
+        eventDate: futureDate,
+        eventTime: "17:00",
+        guests: 20,
+        location: "Lounge",
+        description: "Testing invalid gstEnabled",
+        client: {
+          name: "Invalid Client",
+          phone: "9876543299",
+          email: "invalidgst@example.com",
+        },
+        services: [{ serviceId: testService._id, quantity: 1 }],
+        gstEnabled: "not_a_boolean",
+      }),
+    });
+    assert.strictEqual(invalidGstRes.status, 400);
+
+    // 4. Reload saved estimates and verify gstEnabled setting is preserved
+    const getEstOn = await fetch(`${baseUrl}/estimates/${estOn._id}`, {
+      headers: { Authorization: `Bearer ${managerToken}` },
+    });
+    assert.strictEqual(getEstOn.status, 200);
+    const getEstOnBody = await getEstOn.json();
+    assert.strictEqual(getEstOnBody.data.gstEnabled, true);
+    assert.strictEqual(getEstOnBody.data.gstAmount, 2430);
+    assert.strictEqual(getEstOnBody.data.total, 16430);
+
+    const getEstOff = await fetch(`${baseUrl}/estimates/${estOff._id}`, {
+      headers: { Authorization: `Bearer ${managerToken}` },
+    });
+    assert.strictEqual(getEstOff.status, 200);
+    const getEstOffBody = await getEstOff.json();
+    assert.strictEqual(getEstOffBody.data.gstEnabled, false);
+    assert.strictEqual(getEstOffBody.data.gstAmount, 0);
+    assert.strictEqual(getEstOffBody.data.total, 14000);
+
+    // 5. Edit Estimate: Change GST from ON to OFF
+    const editOnToOffRes = await fetch(`${baseUrl}/estimates/${estOn._id}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${managerToken}`,
+      },
+      body: JSON.stringify({
+        gstEnabled: false,
+      }),
+    });
+    assert.strictEqual(editOnToOffRes.status, 200);
+    const editOnToOffBody = await editOnToOffRes.json();
+    assert.strictEqual(editOnToOffBody.data.gstEnabled, false);
+    assert.strictEqual(editOnToOffBody.data.gstAmount, 0);
+    assert.strictEqual(editOnToOffBody.data.total, 14000, "Grand total must exclude GST immediately when toggled OFF");
+
+    // 6. Edit Estimate: Change GST from OFF back to ON
+    const editOffToOnRes = await fetch(`${baseUrl}/estimates/${estOn._id}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${managerToken}`,
+      },
+      body: JSON.stringify({
+        gstEnabled: true,
+      }),
+    });
+    assert.strictEqual(editOffToOnRes.status, 200);
+    const editOffToOnBody = await editOffToOnRes.json();
+    assert.strictEqual(editOffToOnBody.data.gstEnabled, true);
+    assert.strictEqual(editOffToOnBody.data.gstAmount, 2430);
+    assert.strictEqual(editOffToOnBody.data.total, 16430, "Grand total must include GST immediately when toggled ON");
+
+    // 7. Convert estimate with GST OFF into booking and verify carry-forward
+    const convertOffRes = await fetch(`${baseUrl}/estimates/${estOff._id}/convert`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${managerToken}` },
+    });
+    assert.strictEqual(convertOffRes.status, 201);
+    const convertOffBody = await convertOffRes.json();
+    const convertedBooking = convertOffBody.data.booking;
+    if (convertedBooking?._id) createdBookingIds.push(convertedBooking._id);
+    if (convertOffBody.data?.event?._id) createdEventIds.push(convertOffBody.data.event._id);
+
+    // Fetch booking directly from DB
+    const dbBookingOff = await Booking.findById(convertedBooking._id);
+    assert.strictEqual(dbBookingOff.gstEnabled, false, "Booking must inherit gstEnabled = false from estimate");
+    assert.strictEqual(dbBookingOff.gstAmount, 0, "Booking GST amount must be 0");
+    assert.strictEqual(dbBookingOff.total, 14000, "Booking total must match estimate total exactly without double GST");
+
+    // 8. Convert estimate with GST ON into booking and verify carry-forward
+    const convertOnRes = await fetch(`${baseUrl}/estimates/${estOn._id}/convert`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${managerToken}` },
+    });
+    assert.strictEqual(convertOnRes.status, 201);
+    const convertOnBody = await convertOnRes.json();
+    const convertedBookingOn = convertOnBody.data.booking;
+    if (convertedBookingOn?._id) createdBookingIds.push(convertedBookingOn._id);
+    if (convertOnBody.data?.event?._id) createdEventIds.push(convertOnBody.data.event._id);
+
+    const dbBookingOn = await Booking.findById(convertedBookingOn._id);
+    assert.strictEqual(dbBookingOn.gstEnabled, true, "Booking must inherit gstEnabled = true from estimate");
+    assert.strictEqual(dbBookingOn.gstAmount, 2430);
+    assert.strictEqual(dbBookingOn.total, 16430);
+
+    // 9. Direct Booking Creation with gstEnabled = false
+    const directBookingRes = await fetch(`${baseUrl}/bookings`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${managerToken}`,
+      },
+      body: JSON.stringify({
+        eventName: "Direct Booking GST OFF",
+        eventType: "Anniversary",
+        eventDate: futureDate,
+        eventTime: "20:00",
+        guests: 10,
+        location: "Private Dining",
+        description: "Direct booking test with GST disabled",
+        name: "Direct Client",
+        phone: "9876543220",
+        email: "directclient@example.com",
+        services: [{ serviceId: testService._id, quantity: 1 }],
+        discountType: "fixed",
+        discountValue: 1000,
+        additionalCharges: 200,
+        gstEnabled: false,
+      }),
+    });
+    assert.strictEqual(directBookingRes.status, 201);
+    const directBookingBody = await directBookingRes.json();
+    const directBooking = directBookingBody.data.booking;
+    createdBookingIds.push(directBooking._id);
+
+    // 15,000 - 1,000 (fixed) = 14,000 + 0 GST + 200 = 14,200
+    assert.strictEqual(directBooking.gstEnabled, false);
+    assert.strictEqual(directBooking.gstAmount, 0);
+    assert.strictEqual(directBooking.total, 14200);
+
+    // 10. Backward Compatibility Test: Older estimate without gstEnabled field
+    const oldEstimate = await Estimate.create({
+      estimateNumber: `EST-LEGACY-${Date.now()}`,
+      eventName: "Legacy Historical Proposal",
+      eventType: "Wedding",
+      eventDate: futureDate,
+      eventTime: "12:00",
+      guests: 100,
+      location: "Heritage Palace",
+      description: "Older record created before gstEnabled was introduced",
+      client: {
+        name: "Legacy Client",
+        phone: "9876543230",
+        email: "legacy@example.com",
+      },
+      items: [
+        {
+          serviceId: testService._id,
+          serviceName: "Grand Photography",
+          category: "photography",
+          pricingType: "FIXED",
+          quantity: 1,
+          unitPrice: 15000,
+          total: 15000,
+        },
+      ],
+      subtotal: 15000,
+      discount: 0,
+      discountType: "percentage",
+      discountValue: 0,
+      additionalCharges: 0,
+      gstRate: 18,
+      gstAmount: 2700,
+      total: 17700,
+      status: "DRAFT",
+    });
+    createdEstimateIds.push(oldEstimate._id);
+
+    // Directly unset gstEnabled to simulate legacy record in MongoDB
+    await Estimate.collection.updateOne(
+      { _id: oldEstimate._id },
+      { $unset: { gstEnabled: 1 } }
+    );
+
+    const rawLegacy = await Estimate.collection.findOne({ _id: oldEstimate._id });
+    assert.strictEqual(rawLegacy.gstEnabled, undefined, "Raw MongoDB legacy doc has no gstEnabled field");
+
+    const fetchedLegacy = await Estimate.findById(oldEstimate._id);
+    assert.strictEqual(fetchedLegacy.gstEnabled, true, "Mongoose backward-compatibility defaults legacy record to true");
+    assert.strictEqual(fetchedLegacy.gstAmount, 2700, "Historical GST amount preserved");
+    assert.strictEqual(fetchedLegacy.total, 17700, "Historical total preserved");
+
+    // Convert legacy estimate to booking
+    const convertLegacyRes = await fetch(`${baseUrl}/estimates/${oldEstimate._id}/convert`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${managerToken}` },
+    });
+    assert.strictEqual(convertLegacyRes.status, 201);
+    const convertLegacyBody = await convertLegacyRes.json();
+    if (convertLegacyBody.data?.booking?._id) createdBookingIds.push(convertLegacyBody.data.booking._id);
+    if (convertLegacyBody.data?.event?._id) createdEventIds.push(convertLegacyBody.data.event._id);
+
+    const dbLegacyBooking = await Booking.findById(convertLegacyBody.data.booking._id);
+    assert.strictEqual(dbLegacyBooking.gstEnabled, true, "Legacy record with GST amount is converted as gstEnabled=true");
+    assert.strictEqual(dbLegacyBooking.gstAmount, 2700);
+    assert.strictEqual(dbLegacyBooking.total, 17700);
+  });
+
+  test("12. Itemized Food Menu with Quantities, Pricing, and Catering Summary", async () => {
+    const futureDate = new Date();
+    futureDate.setDate(futureDate.getDate() + 25);
+
+    // 1. Create an estimate for 1000 guests with multiple food items (per-guest + fixed-price)
+    // E.g.:
+    // Item 1: Kesar Pista Thandai (Beverage) - per guest: rate 45, qty 1000, amount 45000
+    // Item 2: Paneer Tikka (Starters) - per guest: rate 80, qty 1000, amount 80000
+    // Item 3: Live Chocolate Fountain (Desserts) - fixed price: rate 15000, qty 1, amount 15000
+    // Total food amount = 45000 + 80000 + 15000 = 140,000
+    // Service: Grand Photography (15,000)
+    // Total subtotal = 140,000 + 15,000 = 155,000
+    const foodItems = [
+      {
+        name: "Kesar Pista Thandai",
+        category: "Beverages",
+        dietary: "veg",
+        rate: 45,
+        quantity: 1000,
+        amount: 45000,
+      },
+      {
+        name: "Paneer Tikka Shashlik",
+        category: "Starters / Appetizers",
+        dietary: "veg",
+        rate: 80,
+        quantity: 1000,
+        amount: 80000,
+      },
+      {
+        name: "Live Chocolate Fountain Station",
+        category: "Desserts & Sweets",
+        dietary: "veg",
+        rate: 15000,
+        quantity: 1,
+        amount: 15000,
+      },
+    ];
+
+    const createEstRes = await fetch(`${baseUrl}/estimates`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${managerToken}`,
+      },
+      body: JSON.stringify({
+        eventName: "Royal Gala for 1000 Guests",
+        eventType: "Corporate Gala",
+        eventDate: futureDate,
+        eventTime: "19:00",
+        guests: 1000,
+        location: "Grand Convention Center",
+        description: "Large 1000 guest banquet with itemized catering",
+        client: {
+          name: "Titan Corp",
+          phone: "9876543240",
+          email: "events@titancorp.com",
+        },
+        services: [{ serviceId: testService._id, quantity: 1 }],
+        foodMenu: {
+          included: true,
+          servingType: "PER_GUEST",
+          ratePerGuest: 140,
+          totalFoodAmount: 140000,
+          notes: "All vegetarian counter. Serve welcome drinks chilled.",
+          items: foodItems,
+        },
+        discountType: "fixed",
+        discountValue: 5000,
+        additionalCharges: 3000,
+        gstEnabled: true,
+      }),
+    });
+
+    assert.strictEqual(createEstRes.status, 201);
+    const estBody = await createEstRes.json();
+    const est = estBody.data;
+    createdEstimateIds.push(est._id);
+
+    // Verify Estimate Food Menu & Financial Calculations
+    assert.strictEqual(est.foodMenu.included, true);
+    assert.strictEqual(est.foodMenu.items.length, 3, "Must persist all 3 food items");
+    assert.strictEqual(est.foodMenu.items[0].name, "Kesar Pista Thandai");
+    assert.strictEqual(est.foodMenu.items[0].quantity, 1000);
+    assert.strictEqual(est.foodMenu.items[0].rate, 45);
+    assert.strictEqual(est.foodMenu.items[0].amount, 45000);
+
+    assert.strictEqual(est.foodMenu.items[2].name, "Live Chocolate Fountain Station");
+    assert.strictEqual(est.foodMenu.items[2].quantity, 1);
+    assert.strictEqual(est.foodMenu.items[2].rate, 15000);
+    assert.strictEqual(est.foodMenu.items[2].amount, 15000);
+
+    assert.strictEqual(est.foodMenu.totalFoodAmount, 140000, "Catering subtotal must be 140,000");
+
+    // Combined subtotal = 140,000 + 15,000 = 155,000
+    assert.strictEqual(est.subtotal, 155000);
+    // Discount = 5,000
+    assert.strictEqual(est.discount, 5000);
+    // Taxable = 155,000 - 5,000 = 150,000
+    // GST (18%) = 150,000 * 0.18 = 27,000
+    assert.strictEqual(est.gstAmount, 27000);
+    // Additional = 3,000
+    // Grand Total = 150,000 + 27,000 + 3,000 = 180,000
+    assert.strictEqual(est.total, 180000);
+
+    // 2. Convert 1000-guest estimate to booking and verify carry-forward
+    const convertRes = await fetch(`${baseUrl}/estimates/${est._id}/convert`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${managerToken}` },
+    });
+    assert.strictEqual(convertRes.status, 201);
+    const convertBody = await convertRes.json();
+    const convertedBooking = convertBody.data.booking;
+    if (convertedBooking?._id) createdBookingIds.push(convertedBooking._id);
+    if (convertBody.data?.event?._id) createdEventIds.push(convertBody.data.event._id);
+
+    const dbBooking = await Booking.findById(convertedBooking._id);
+    assert.strictEqual(dbBooking.foodMenu.included, true);
+    assert.strictEqual(dbBooking.foodMenu.items.length, 3);
+    assert.strictEqual(dbBooking.foodMenu.items[0].name, "Kesar Pista Thandai");
+    assert.strictEqual(dbBooking.foodMenu.items[0].quantity, 1000);
+    assert.strictEqual(dbBooking.foodMenu.items[0].rate, 45);
+    assert.strictEqual(dbBooking.foodMenu.items[0].amount, 45000);
+    assert.strictEqual(dbBooking.foodMenu.totalFoodAmount, 140000);
+    assert.strictEqual(dbBooking.total, 180000, "Booking total must reconcile with estimate");
+
+    // 3. Direct booking creation with food menu and GST OFF
+    const directBookingRes = await fetch(`${baseUrl}/bookings`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${managerToken}`,
+      },
+      body: JSON.stringify({
+        eventName: "Direct Booking With Catering GST OFF",
+        eventType: "Reception",
+        eventDate: futureDate,
+        eventTime: "20:00",
+        guests: 50,
+        location: "Garden Pavilion",
+        description: "Testing direct booking with food menu and GST disabled",
+        name: "Private Host",
+        phone: "9876543250",
+        email: "host@example.com",
+        services: [{ serviceId: testService._id, quantity: 1 }],
+        foodMenu: {
+          included: true,
+          servingType: "PER_GUEST",
+          ratePerGuest: 500,
+          totalFoodAmount: 25000,
+          notes: "Gluten free options requested",
+          items: [
+            {
+              name: "Exotic Fruit Platter",
+              category: "Starters / Appetizers",
+              dietary: "veg",
+              rate: 200,
+              quantity: 50,
+              amount: 10000,
+            },
+            {
+              name: "Biryani Feast",
+              category: "Main Course",
+              dietary: "veg",
+              rate: 300,
+              quantity: 50,
+              amount: 15000,
+            },
+          ],
+        },
+        discountType: "fixed",
+        discountValue: 0,
+        additionalCharges: 0,
+        gstEnabled: false,
+      }),
+    });
+    assert.strictEqual(directBookingRes.status, 201);
+    const directBody = await directBookingRes.json();
+    const directBooking = directBody.data.booking;
+    createdBookingIds.push(directBooking._id);
+
+    // Food (25,000) + Service (15,000) = 40,000; GST = 0; Total = 40,000
+    assert.strictEqual(directBooking.foodMenu.included, true);
+    assert.strictEqual(directBooking.foodMenu.items.length, 2);
+    assert.strictEqual(directBooking.foodMenu.totalFoodAmount, 25000);
+    assert.strictEqual(directBooking.gstEnabled, false);
+    assert.strictEqual(directBooking.gstAmount, 0);
+    assert.strictEqual(directBooking.total, 40000);
+
+    // 4. Older booking with incomplete menu pricing (missing individual prices, rate: 0)
+    // Subtotal must remain preserved without fabricating prices
+    const legacyBooking = await Booking.create({
+      client: dbBooking.client,
+      eventName: "Legacy Catering Event",
+      eventType: "Wedding",
+      eventDate: futureDate,
+      eventTime: "18:00",
+      guests: 200,
+      location: "Town Hall",
+      description: "Older booking with items that have rate: 0",
+      services: [
+        {
+          serviceId: testService._id,
+          serviceName: "Grand Photography",
+          category: "photography",
+          pricingType: "FIXED",
+          quantity: 1,
+          unitPrice: 15000,
+          total: 15000,
+        },
+      ],
+      foodMenu: {
+        included: true,
+        servingType: "PER_GUEST",
+        ratePerGuest: 225,
+        totalFoodAmount: 45000,
+        notes: "Historical catering package",
+        items: [
+          {
+            name: "Traditional Welcome Drink",
+            category: "Beverages",
+            dietary: "veg",
+            rate: 0,
+            quantity: 200,
+            amount: 0,
+          },
+          {
+            name: "Royal Thali",
+            category: "Main Course",
+            dietary: "veg",
+            rate: 0,
+            quantity: 200,
+            amount: 0,
+          },
+        ],
+      },
+      subtotal: 60000,
+      discountType: "percentage",
+      discountValue: 0,
+      discountAmount: 0,
+      additionalCharges: 0,
+      gstEnabled: true,
+      gstRate: 18,
+      gstAmount: 10800,
+      total: 70800,
+      status: "Confirmed",
+    });
+    createdBookingIds.push(legacyBooking._id);
+
+    const fetchedLegacyBooking = await Booking.findById(legacyBooking._id);
+    assert.strictEqual(fetchedLegacyBooking.foodMenu.totalFoodAmount, 45000);
+    assert.strictEqual(fetchedLegacyBooking.foodMenu.items.length, 2);
+    assert.strictEqual(fetchedLegacyBooking.foodMenu.items[0].rate, 0);
+    assert.strictEqual(fetchedLegacyBooking.total, 70800, "Historical totals preserved");
+  });
 });

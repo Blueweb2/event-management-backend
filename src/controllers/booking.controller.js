@@ -25,6 +25,8 @@ const createBooking = async (req, res, next) => {
       discountType,
       discountValue,
       additionalCharges,
+      gstEnabled,
+      foodMenu,
     } = req.body;
 
     // ==========================================
@@ -206,6 +208,20 @@ const createBooking = async (req, res, next) => {
     }
 
     // ==========================================
+    // Validate GST Toggle
+    // ==========================================
+
+    let normalizedGstEnabled = true;
+    if (gstEnabled !== undefined && gstEnabled !== null) {
+      if (typeof gstEnabled !== "boolean") {
+        const error = new Error("gstEnabled must be a boolean");
+        error.statusCode = 400;
+        throw error;
+      }
+      normalizedGstEnabled = gstEnabled;
+    }
+
+    // ==========================================
     // Create Booking
     // ==========================================
 
@@ -234,6 +250,11 @@ const createBooking = async (req, res, next) => {
 
         additionalCharges:
           normalizedAdditionalCharges,
+
+        gstEnabled:
+          normalizedGstEnabled,
+
+        foodMenu,
 
         createdBy:
           req.user?.userId || null,

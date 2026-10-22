@@ -439,6 +439,11 @@ const estimateSchema = new mongoose.Schema(
      * if the GST configuration changes later.
      */
 
+    gstEnabled: {
+      type: Boolean,
+      default: true,
+    },
+
     gstRate: {
       type: Number,
       required: true,

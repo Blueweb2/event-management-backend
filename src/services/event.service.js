@@ -330,7 +330,7 @@ const getEvents = async ({
       .populate("client", "name phone email")
       .populate(
         "booking",
-        "eventName eventType eventDate eventTime guests location total status foodMenu services"
+        "eventName eventType eventDate eventTime guests location description total status foodMenu services subtotal discountAmount additionalCharges gstEnabled gstRate gstAmount currency paidAmount advancePayment paymentStatus"
       )
       .populate(
         "createdBy",
@@ -377,7 +377,7 @@ const getEventById = async (eventId) => {
     )
     .populate(
       "booking",
-      "eventName eventType eventDate eventTime guests location description services foodMenu subtotal discountAmount additionalCharges total currency status paidAmount advancePayment paymentStatus paymentHistory"
+      "eventName eventType eventDate eventTime guests location description services foodMenu subtotal discountAmount additionalCharges gstEnabled gstRate gstAmount total currency status paidAmount advancePayment paymentStatus paymentHistory"
     )
     .populate(
       "createdBy",

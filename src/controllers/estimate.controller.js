@@ -35,6 +35,7 @@ const createEstimateController = async (
       discountType,
       discountValue,
       additionalCharges,
+      gstEnabled,
     } = req.body;
 
     // ========================================
@@ -209,6 +210,21 @@ const createEstimateController = async (
     }
 
     // ========================================
+    // Validate GST Toggle
+    // ========================================
+
+    let normalizedGstEnabled = true;
+    if (gstEnabled !== undefined && gstEnabled !== null) {
+      if (typeof gstEnabled !== "boolean") {
+        return res.status(400).json({
+          success: false,
+          message: "gstEnabled must be a boolean",
+        });
+      }
+      normalizedGstEnabled = gstEnabled;
+    }
+
+    // ========================================
     // Create Estimate
     // ========================================
 
@@ -283,6 +299,9 @@ const createEstimateController = async (
 
         additionalCharges:
           additionalCharges ?? 0,
+
+        gstEnabled:
+          normalizedGstEnabled,
 
         // ------------------------------------
         // Authenticated user
@@ -465,7 +484,19 @@ const updateEstimateController = async (req, res, next) => {
       discountType,
       discountValue,
       additionalCharges,
+      gstEnabled,
     } = req.body;
+
+    if (
+      gstEnabled !== undefined &&
+      gstEnabled !== null &&
+      typeof gstEnabled !== "boolean"
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "gstEnabled must be a boolean",
+      });
+    }
 
     const updated = await updateEstimate(id, {
       eventName,
@@ -481,6 +512,7 @@ const updateEstimateController = async (req, res, next) => {
       discountType,
       discountValue,
       additionalCharges,
+      gstEnabled,
       updatedBy: req.user?._id || null,
     });
 

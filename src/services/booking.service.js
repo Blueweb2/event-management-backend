@@ -30,6 +30,8 @@ const createBooking = async ({
   discountType = "percentage",
   discountValue = 0,
   additionalCharges = 0,
+  gstEnabled = true,
+  foodMenu = null,
 
   createdBy = null,
 }) => {
@@ -139,12 +141,84 @@ const createBooking = async ({
     });
 
   // ==========================================
+  // Process Food Menu (If included)
+  // ==========================================
+
+  let foodMenuData = {
+    included: false,
+    servingType: "PER_GUEST",
+    ratePerGuest: 0,
+    totalFoodAmount: 0,
+    notes: "",
+    items: [],
+  };
+
+  if (foodMenu && foodMenu.included) {
+    const allowedServingTypes = ["PER_GUEST", "PER_PLATE", "FIXED"];
+    const servingType = allowedServingTypes.includes(foodMenu.servingType)
+      ? foodMenu.servingType
+      : (Number(foodMenu.ratePerGuest || 0) > 0 ? "PER_GUEST" : "FIXED");
+    const ratePerGuest = Math.max(0, Number(foodMenu.ratePerGuest || 0));
+
+    const items = Array.isArray(foodMenu.items)
+      ? foodMenu.items.map((item) => {
+          const rate = Math.max(0, Number(item.rate || 0));
+          const quantity = Math.max(
+            1,
+            Math.floor(
+              Number(
+                item.quantity ||
+                  (servingType === "PER_GUEST" && guestCount > 0 ? guestCount : 1)
+              )
+            )
+          );
+          const amount =
+            item.amount !== undefined &&
+            item.amount !== null &&
+            Number(item.amount) > 0
+              ? Number(Number(item.amount).toFixed(2))
+              : Number((rate * quantity).toFixed(2));
+
+          return {
+            foodItemId: item.foodItemId || null,
+            name: String(item.name || "").trim(),
+            category: String(item.category || "").trim(),
+            dietary: item.dietary || "veg",
+            rate,
+            quantity,
+            amount,
+          };
+        })
+      : [];
+    const computedFromItems = items.reduce((total, item) => total + item.amount, 0);
+    const totalFoodAmount =
+      computedFromItems > 0
+        ? computedFromItems
+        : ratePerGuest > 0
+        ? ratePerGuest * guestCount
+        : Number(foodMenu.totalFoodAmount || 0);
+
+    foodMenuData = {
+      included: true,
+      servingType,
+      ratePerGuest,
+      totalFoodAmount: Number(totalFoodAmount.toFixed(2)),
+      notes: foodMenu.notes ? String(foodMenu.notes).trim() : "",
+      items,
+    };
+  }
+
+  // ==========================================
   // Calculate Final Total
   // ==========================================
 
+  const combinedSubtotal = Number(
+    (pricingResult.subtotal + foodMenuData.totalFoodAmount).toFixed(2)
+  );
+
   const totals =
     calculateEstimateTotal({
-      subtotal: pricingResult.subtotal,
+      subtotal: combinedSubtotal,
 
       discountType:
         normalizedDiscountType,
@@ -154,6 +228,8 @@ const createBooking = async ({
 
       additionalCharges:
         normalizedAdditionalCharges,
+
+      gstEnabled,
     });
 
   // ==========================================
@@ -199,6 +275,12 @@ const createBooking = async ({
       pricingResult.lineItems,
 
     // ========================================
+    // Food Menu Snapshot
+    // ========================================
+
+    foodMenu: foodMenuData,
+
+    // ========================================
     // Pricing
     // ========================================
 
@@ -216,6 +298,15 @@ const createBooking = async ({
 
     additionalCharges:
       normalizedAdditionalCharges,
+
+    gstEnabled:
+      totals.gstEnabled,
+
+    gstRate:
+      totals.gstRate,
+
+    gstAmount:
+      totals.gstAmount,
 
     total:
       totals.total,

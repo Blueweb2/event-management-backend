@@ -40,6 +40,7 @@ const createEstimate = async ({
   discountType = "percentage",
   discountValue = 0,
   additionalCharges = 0,
+  gstEnabled = true,
 
   createdBy = null,
 }) => {
@@ -219,12 +220,30 @@ const createEstimate = async ({
   };
 
   if (foodMenu && foodMenu.included) {
-    const servingType = "FIXED";
+    const allowedServingTypes = ["PER_GUEST", "PER_PLATE", "FIXED"];
+    const servingType = allowedServingTypes.includes(foodMenu.servingType)
+      ? foodMenu.servingType
+      : (Number(foodMenu.ratePerGuest || 0) > 0 ? "PER_GUEST" : "FIXED");
+    const ratePerGuest = Math.max(0, Number(foodMenu.ratePerGuest || 0));
+
     const items = Array.isArray(foodMenu.items)
       ? foodMenu.items.map((item) => {
           const rate = Math.max(0, Number(item.rate || 0));
-          const quantity = Math.max(1, Math.floor(Number(item.quantity || 1)));
-          const amount = Number((rate * quantity).toFixed(2));
+          const quantity = Math.max(
+            1,
+            Math.floor(
+              Number(
+                item.quantity ||
+                  (servingType === "PER_GUEST" && guestCount > 0 ? guestCount : 1)
+              )
+            )
+          );
+          const amount =
+            item.amount !== undefined &&
+            item.amount !== null &&
+            Number(item.amount) > 0
+              ? Number(Number(item.amount).toFixed(2))
+              : Number((rate * quantity).toFixed(2));
 
           return {
             foodItemId: item.foodItemId || null,
@@ -237,12 +256,18 @@ const createEstimate = async ({
           };
         })
       : [];
-    const totalFoodAmount = items.reduce((total, item) => total + item.amount, 0);
+    const computedFromItems = items.reduce((total, item) => total + item.amount, 0);
+    const totalFoodAmount =
+      computedFromItems > 0
+        ? computedFromItems
+        : ratePerGuest > 0
+        ? ratePerGuest * guestCount
+        : Number(foodMenu.totalFoodAmount || 0);
 
     foodMenuData = {
       included: true,
       servingType,
-      ratePerGuest: 0,
+      ratePerGuest,
       totalFoodAmount: Number(totalFoodAmount.toFixed(2)),
       notes: foodMenu.notes ? String(foodMenu.notes).trim() : "",
       items,
@@ -266,6 +291,8 @@ const createEstimate = async ({
       discountValue,
 
       additionalCharges,
+
+      gstEnabled,
     });
 
   // ========================================
@@ -370,6 +397,9 @@ const createEstimate = async ({
       // ------------------------------------
       // GST
       // ------------------------------------
+
+      gstEnabled:
+        totals.gstEnabled,
 
       gstRate:
         totals.gstRate,
@@ -844,6 +874,12 @@ const convertEstimateToBooking = async (
     discountValue: estimate.discountValue,
     discountAmount: estimate.discount,
     additionalCharges: estimate.additionalCharges,
+    gstEnabled:
+      estimate.gstEnabled !== undefined
+        ? estimate.gstEnabled
+        : (estimate.gstAmount !== undefined ? estimate.gstAmount > 0 : true),
+    gstRate: estimate.gstRate ?? 18,
+    gstAmount: estimate.gstAmount ?? 0,
     total: estimate.total,
     currency: estimate.currency ?? "INR",
 
@@ -932,6 +968,7 @@ const updateEstimate = async (
     discountType,
     discountValue,
     additionalCharges,
+    gstEnabled,
     updatedBy = null,
   } = {}
 ) => {
@@ -1092,11 +1129,31 @@ const updateEstimate = async (
     };
 
     if (foodMenu && foodMenu.included) {
+      const allowedServingTypes = ["PER_GUEST", "PER_PLATE", "FIXED"];
+      const servingType = allowedServingTypes.includes(foodMenu.servingType)
+        ? foodMenu.servingType
+        : (Number(foodMenu.ratePerGuest || 0) > 0 ? "PER_GUEST" : "FIXED");
+      const ratePerGuest = Math.max(0, Number(foodMenu.ratePerGuest || 0));
+
       const items = Array.isArray(foodMenu.items)
         ? foodMenu.items.map((item) => {
             const rate = Math.max(0, Number(item.rate || 0));
-            const quantity = Math.max(1, Math.floor(Number(item.quantity || 1)));
-            const amount = Number((rate * quantity).toFixed(2));
+            const quantity = Math.max(
+              1,
+              Math.floor(
+                Number(
+                  item.quantity ||
+                    (servingType === "PER_GUEST" && estimate.guests > 0 ? estimate.guests : 1)
+                )
+              )
+            );
+            const amount =
+              item.amount !== undefined &&
+              item.amount !== null &&
+              Number(item.amount) > 0
+                ? Number(Number(item.amount).toFixed(2))
+                : Number((rate * quantity).toFixed(2));
+
             return {
               foodItemId: item.foodItemId || null,
               name: String(item.name || "").trim(),
@@ -1108,12 +1165,18 @@ const updateEstimate = async (
             };
           })
         : [];
-      const totalFoodAmount = items.reduce((total, item) => total + item.amount, 0);
+      const computedFromItems = items.reduce((total, item) => total + item.amount, 0);
+      const totalFoodAmount =
+        computedFromItems > 0
+          ? computedFromItems
+          : ratePerGuest > 0
+          ? ratePerGuest * estimate.guests
+          : Number(foodMenu.totalFoodAmount || 0);
 
       foodMenuData = {
         included: true,
-        servingType: "FIXED",
-        ratePerGuest: 0,
+        servingType,
+        ratePerGuest,
         totalFoodAmount: Number(totalFoodAmount.toFixed(2)),
         notes: foodMenu.notes ? String(foodMenu.notes).trim() : "",
         items,
@@ -1141,12 +1204,19 @@ const updateEstimate = async (
     additionalCharges !== undefined
       ? Number(additionalCharges)
       : estimate.additionalCharges;
+  const resolvedGstEnabled =
+    gstEnabled !== undefined
+      ? gstEnabled
+      : estimate.gstEnabled !== undefined
+        ? estimate.gstEnabled
+        : (estimate.gstAmount !== undefined ? estimate.gstAmount > 0 : true);
 
   const totals = calculateEstimateTotal({
     subtotal: combinedSubtotal,
     discountType: resolvedDiscountType,
     discountValue: resolvedDiscountValue,
     additionalCharges: resolvedAdditionalCharges,
+    gstEnabled: resolvedGstEnabled,
   });
 
   estimate.subtotal = totals.subtotal;
@@ -1154,6 +1224,7 @@ const updateEstimate = async (
   estimate.discountType = totals.discountType;
   estimate.discountValue = totals.discountValue;
   estimate.additionalCharges = totals.additionalCharges;
+  estimate.gstEnabled = totals.gstEnabled;
   estimate.gstRate = totals.gstRate;
   estimate.gstAmount = totals.gstAmount;
   estimate.total = totals.total;
