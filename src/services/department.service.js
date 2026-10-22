@@ -95,7 +95,13 @@ const mapCategoryToDepartment = (category = "", serviceName = "") => {
 const getEventStaffingRequirements = async (eventId) => {
   const event = await Event.findById(eventId)
     .populate("client", "name phone email")
-    .populate("booking");
+    .populate({
+      path: "booking",
+      populate: {
+        path: "services.serviceId",
+        select: "name category description imageUrl basePrice pricingType unitLabel options",
+      },
+    });
 
   if (!event) {
     const error = new Error("Event not found");
@@ -103,7 +109,17 @@ const getEventStaffingRequirements = async (eventId) => {
     throw error;
   }
 
-  const booking = event.booking || (await Booking.findById(event._id)) || {};
+  let booking = event.booking;
+  if (!booking || !booking.services) {
+    booking =
+      (await Booking.findById(event.booking?._id || event.booking || event._id)
+        .populate({
+          path: "services.serviceId",
+          select:
+            "name category description imageUrl basePrice pricingType unitLabel options",
+        })
+        .lean()) || {};
+  }
   const eventDate = new Date(event.eventDate);
   const targetDateStr = eventDate.toISOString().slice(0, 10);
 
@@ -279,6 +295,19 @@ const getEventStaffingRequirements = async (eventId) => {
   bookedServices.forEach((svc, index) => {
     const mappedDept = mapCategoryToDepartment(svc.category, svc.serviceName);
 
+    // Resolve service doc and matched option if populated
+    const serviceDoc = svc.serviceId && typeof svc.serviceId === "object" ? svc.serviceId : null;
+    const rawServiceId = serviceDoc?._id || svc.serviceId || null;
+    const matchedOption = serviceDoc?.options?.find(
+      (opt) => opt._id?.toString() === svc.optionId?.toString()
+    );
+
+    const resolvedOptionName = svc.optionName || matchedOption?.name || null;
+    const resolvedOptionDesc = matchedOption?.description || "";
+    const resolvedUnitLabel = svc.unitLabel || matchedOption?.unitLabel || serviceDoc?.unitLabel || "unit";
+    const resolvedDescription = svc.description || resolvedOptionDesc || serviceDoc?.description || "";
+    const resolvedImageUrl = serviceDoc?.imageUrl || matchedOption?.imageUrl || "";
+
     let deptStaff = enrichedStaffPool.filter((s) => {
       const sDept = (s.department || "").toLowerCase();
       const mDept = mappedDept.toLowerCase();
@@ -312,19 +341,54 @@ const getEventStaffingRequirements = async (eventId) => {
           d.dutyTitle?.toLowerCase().includes(svc.category.toLowerCase()))
     );
 
+    // Group all booked items in this category/department for multi-item breakdown
+    const categoryServices = bookedServices
+      .filter(
+        (s) =>
+          (s.category || "").toLowerCase() === (svc.category || "").toLowerCase() ||
+          mapCategoryToDepartment(s.category, s.serviceName).toLowerCase() === mappedDept.toLowerCase()
+      )
+      .map((s) => {
+        const sDoc = s.serviceId && typeof s.serviceId === "object" ? s.serviceId : null;
+        const opt = sDoc?.options?.find((o) => o._id?.toString() === s.optionId?.toString());
+        return {
+          serviceId: sDoc?._id || s.serviceId || null,
+          serviceName: s.serviceName,
+          optionId: s.optionId || null,
+          optionName: s.optionName || opt?.name || null,
+          packageName: s.optionName || opt?.name || null,
+          category: s.category,
+          description: s.description || opt?.description || sDoc?.description || "",
+          quantity: s.quantity || 1,
+          pricingType: s.pricingType || "FIXED",
+          unitLabel: s.unitLabel || opt?.unitLabel || sDoc?.unitLabel || "unit",
+          unitPrice: s.unitPrice || 0,
+          total: s.total || 0,
+        };
+      });
+
     streams.push({
-      streamId: `service-${index}-${svc.serviceId || svc._id || index}`,
+      streamId: `service-${index}-${rawServiceId || svc._id || index}`,
       streamType: "SERVICE",
       title: svc.serviceName,
       department: mappedDept,
       category: svc.category,
-      description: svc.description || `${svc.serviceName} (${svc.pricingType || "Custom"})`,
+      description: resolvedDescription || `${svc.serviceName} (${svc.pricingType || "Custom"})`,
       specDetails: {
+        serviceId: rawServiceId,
+        serviceName: svc.serviceName,
+        category: svc.category,
+        optionId: svc.optionId || null,
+        optionName: resolvedOptionName,
+        packageName: resolvedOptionName,
+        description: resolvedDescription,
         quantity: svc.quantity || 1,
         pricingType: svc.pricingType || "FIXED",
-        unitLabel: svc.unitLabel || "unit",
+        unitLabel: resolvedUnitLabel,
         unitPrice: svc.unitPrice || 0,
         total: svc.total || 0,
+        imageUrl: resolvedImageUrl,
+        categoryServices,
       },
       recommendedStaffCount: svc.quantity || 1,
       allocatedCount: matchingDuties.length,
@@ -374,6 +438,25 @@ const getEventStaffingRequirements = async (eventId) => {
   // 6. Organization-wide Department Summary for this Date
   const departmentSummary = calculateDepartmentSummary(enrichedStaffPool);
 
+  const formattedBookedServices = bookedServices.map((s) => {
+    const sDoc = s.serviceId && typeof s.serviceId === "object" ? s.serviceId : null;
+    const opt = sDoc?.options?.find((o) => o._id?.toString() === s.optionId?.toString());
+    return {
+      serviceId: sDoc?._id || s.serviceId || null,
+      serviceName: s.serviceName,
+      optionId: s.optionId || null,
+      optionName: s.optionName || opt?.name || null,
+      packageName: s.optionName || opt?.name || null,
+      category: s.category,
+      description: s.description || opt?.description || sDoc?.description || "",
+      quantity: s.quantity || 1,
+      pricingType: s.pricingType || "FIXED",
+      unitLabel: s.unitLabel || opt?.unitLabel || sDoc?.unitLabel || "unit",
+      unitPrice: s.unitPrice || 0,
+      total: s.total || 0,
+    };
+  });
+
   return {
     event: {
       id: event._id,
@@ -388,6 +471,7 @@ const getEventStaffingRequirements = async (eventId) => {
       hasCatering,
       foodMenu,
       servicesCount: bookedServices.length,
+      bookedServices: formattedBookedServices,
     },
     targetDate: targetDateStr,
     staffingStreams: streams,

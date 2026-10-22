@@ -17,6 +17,12 @@ const bookingServiceSchema = new mongoose.Schema(
       default: null,
     },
 
+    optionName: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+
     // ==========================================
     // Service Snapshot
     // ==========================================

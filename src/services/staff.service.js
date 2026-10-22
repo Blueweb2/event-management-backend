@@ -96,11 +96,17 @@ const createStaff = async ({
   let targetRole = "staff";
   let targetDepartment = (department || "").trim();
 
+  const isManagerialRoleAttempt = (r) => {
+    if (!r) return false;
+    const lower = String(r).toLowerCase().trim();
+    return lower === "manager" || lower === "admin" || lower === "superadmin";
+  };
+
   if (isSuperAdmin(requester)) {
-    targetRole = (role === "manager" || role === "admin") ? role : "staff";
+    targetRole = "staff"; // Staff creation endpoint strictly provisions regular staff accounts
     targetDepartment = (department || "").trim();
   } else if (isChefManager(requester)) {
-    if (role && role !== "staff") {
+    if (isManagerialRoleAttempt(role)) {
       const error = new Error("Access denied: Chef Managers cannot create manager accounts");
       error.statusCode = 403;
       throw error;
@@ -115,19 +121,19 @@ const createStaff = async ({
     salary = 0;
     hourlyRate = 0;
   } else if (isDepartmentManager(requester)) {
-    const authDept = requester?.department || "";
-    if (role && role !== "staff") {
+    const authDept = requester?.department ? String(requester.department).trim() : "";
+    if (isManagerialRoleAttempt(role)) {
       const error = new Error("Access denied: Managers cannot create manager accounts");
       error.statusCode = 403;
       throw error;
     }
-    if (department && normalizeDepartment(department) !== normalizeDepartment(authDept)) {
+    if (authDept && department && normalizeDepartment(department) !== normalizeDepartment(authDept)) {
       const error = new Error(`Access denied: Cannot create staff outside your assigned department ("${authDept}")`);
       error.statusCode = 403;
       throw error;
     }
     targetRole = "staff";
-    targetDepartment = authDept;
+    targetDepartment = authDept || (department || "").trim();
   }
 
   // Normalize and sanitize username
@@ -482,20 +488,26 @@ const updateStaff = async (
         throw error;
       }
     } else if (isMgr) {
-      const authDept = requester?.department || "";
-      if (normalizeDepartment(staff.department) !== normalizeDepartment(authDept)) {
+      const authDept = requester?.department ? String(requester.department).trim() : "";
+      if (authDept && normalizeDepartment(staff.department) !== normalizeDepartment(authDept)) {
         const error = new Error("Access denied: Staff member belongs to another department");
         error.statusCode = 403;
         throw error;
       }
-      if (department !== undefined && normalizeDepartment(department) !== normalizeDepartment(authDept)) {
+      if (authDept && department !== undefined && normalizeDepartment(department) !== normalizeDepartment(authDept)) {
         const error = new Error(`Access denied: Cannot reassign staff to a different department (must remain "${authDept}")`);
         error.statusCode = 403;
         throw error;
       }
     }
 
-    if (role !== undefined && role !== "staff") {
+    const isManagerialRoleAttempt = (r) => {
+      if (!r) return false;
+      const lower = String(r).toLowerCase().trim();
+      return lower === "manager" || lower === "admin" || lower === "superadmin";
+    };
+
+    if (isManagerialRoleAttempt(role)) {
       const error = new Error("Access denied: Managers cannot promote staff or change roles");
       error.statusCode = 403;
       throw error;

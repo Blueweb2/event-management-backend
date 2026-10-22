@@ -511,4 +511,205 @@ test.describe("RBAC Role Hierarchy & Manager Creation Test Suite", () => {
     });
     assert.equal(resStaffCreateStaff.status, 403, "Staff cannot create other staff members");
   });
+
+  // ========================================================
+  // 12. DEPARTMENT SCOPING & ROLE ESCALATION PREVENTION
+  // ========================================================
+  test("12. Scoped Manager cannot create staff outside their department or elevate roles", async () => {
+    const ts = Date.now();
+    const hashedPassword = await bcrypt.hash("Password123!", 12);
+
+    // Create a Decoration Department Manager
+    const decorManager = await User.create({
+      name: "Decor Manager",
+      username: `decormgr_${ts}`,
+      email: `decormgr_${ts}@example.com`,
+      password: hashedPassword,
+      role: "manager",
+      department: "Decoration",
+      isActive: true,
+    });
+    createdUserIds.push(decorManager._id);
+    const decorManagerToken = generateToken(decorManager);
+
+    // 1. Attempt to create staff with role: "manager" -> 403
+    const resElevate = await fetch(`${baseUrl}/users/staff`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${decorManagerToken}`,
+      },
+      body: JSON.stringify({
+        name: "Escalated User",
+        username: `esc_${ts}`,
+        email: `esc_${ts}@example.com`,
+        password: "Password123!",
+        role: "manager",
+        department: "Decoration",
+      }),
+    });
+    assert.equal(resElevate.status, 403, "Manager cannot create another manager");
+
+    // 2. Attempt to create staff outside authorized department (Kitchen instead of Decoration) -> 403
+    const resWrongDept = await fetch(`${baseUrl}/users/staff`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${decorManagerToken}`,
+      },
+      body: JSON.stringify({
+        name: "Kitchen Infiltration",
+        username: `kitch_inf_${ts}`,
+        email: `kitch_inf_${ts}@example.com`,
+        password: "Password123!",
+        department: "Kitchen",
+      }),
+    });
+    assert.equal(resWrongDept.status, 403, "Manager cannot create staff outside their authorized department");
+
+    // 3. Valid creation within Decoration scope -> 201
+    const resValid = await fetch(`${baseUrl}/users/staff`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${decorManagerToken}`,
+      },
+      body: JSON.stringify({
+        name: "Decor Crew",
+        username: `decorcrew_${ts}`,
+        email: `decorcrew_${ts}@example.com`,
+        password: "Password123!",
+        department: "Decoration",
+      }),
+    });
+    const bodyValid = await resValid.json();
+    assert.equal(resValid.status, 201);
+    const newStaff = bodyValid.data.staff || bodyValid.data;
+    assert.equal(newStaff.department, "Decoration");
+    assert.equal(newStaff.role, "staff");
+    createdUserIds.push(newStaff.id || newStaff._id);
+
+    // 4. Attempt to update staff to manager -> 403
+    const resUpdateElevate = await fetch(`${baseUrl}/users/staff/${newStaff.id || newStaff._id}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${decorManagerToken}`,
+      },
+      body: JSON.stringify({
+        role: "manager",
+      }),
+    });
+    assert.equal(resUpdateElevate.status, 403, "Manager cannot promote staff to manager via update");
+  });
+
+  // ========================================================
+  // 13. SUPERADMIN PERMISSION AND DEPARTMENT EDITING
+  // ========================================================
+  test("13. Superadmin can edit manager permissions and department assignments, non-superadmin is blocked", async () => {
+    // Superadmin updates manager department and permissions
+    const resEdit = await fetch(`${baseUrl}/auth/managers/${testManager._id}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${superAdminToken}`,
+      },
+      body: JSON.stringify({
+        department: "Photography",
+        permissions: ["photography:view_events", "photography:manage_shoot_tasks"],
+        location: "South Studio",
+      }),
+    });
+
+    const bodyEdit = await resEdit.json();
+    assert.equal(resEdit.status, 200);
+    assert.equal(bodyEdit.data.department, "Photography");
+    assert.deepEqual(bodyEdit.data.permissions, ["photography:view_events", "photography:manage_shoot_tasks"]);
+
+    // Manager attempting to edit manager -> 403
+    const resMgrAttempt = await fetch(`${baseUrl}/auth/managers/${testManager._id}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${managerToken}`,
+      },
+      body: JSON.stringify({
+        department: "Operations",
+      }),
+    });
+    assert.equal(resMgrAttempt.status, 403, "Non-superadmin cannot edit manager configuration");
+  });
+
+  // ========================================================
+  // 14. SUSPENSION AND AUTHENTICATION ENFORCEMENT
+  // ========================================================
+  test("14. Suspended accounts are immediately blocked from logging in", async () => {
+    const ts = Date.now();
+    const hashedPassword = await bcrypt.hash("Password123!", 12);
+
+    const suspendedUser = await User.create({
+      name: "Suspended Manager",
+      username: `susp_mgr_${ts}`,
+      email: `susp_mgr_${ts}@example.com`,
+      password: hashedPassword,
+      role: "manager",
+      department: "Catering",
+      isActive: true,
+    });
+    createdUserIds.push(suspendedUser._id);
+
+    // 1. Initial login succeeds
+    const resLogin1 = await fetch(`${baseUrl}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        identifier: suspendedUser.email,
+        password: "Password123!",
+      }),
+    });
+    assert.equal(resLogin1.status, 200);
+
+    // 2. Superadmin suspends the account
+    const resStatus = await fetch(`${baseUrl}/auth/managers/${suspendedUser._id}/status`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${superAdminToken}`,
+      },
+      body: JSON.stringify({ isActive: false }),
+    });
+    assert.equal(resStatus.status, 200);
+
+    // 3. Login attempt now fails with 403 Forbidden
+    const resLogin2 = await fetch(`${baseUrl}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        identifier: suspendedUser.email,
+        password: "Password123!",
+      }),
+    });
+    assert.equal(resLogin2.status, 403, "Suspended account must be blocked from logging in");
+
+    // 4. Reactivation restores login capability
+    await fetch(`${baseUrl}/auth/managers/${suspendedUser._id}/status`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${superAdminToken}`,
+      },
+      body: JSON.stringify({ isActive: true }),
+    });
+
+    const resLogin3 = await fetch(`${baseUrl}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        identifier: suspendedUser.email,
+        password: "Password123!",
+      }),
+    });
+    assert.equal(resLogin3.status, 200, "Reactivated account can log in normally");
+  });
 });
+
