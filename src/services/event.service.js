@@ -327,11 +327,19 @@ const getEvents = async ({
 
   const [events, total] = await Promise.all([
     Event.find(query)
-      .populate("client", "name phone email")
       .populate(
-        "booking",
-        "eventName eventType eventDate eventTime guests location description total status foodMenu services subtotal discountAmount additionalCharges gstEnabled gstRate gstAmount currency paidAmount advancePayment paymentStatus"
+        "client",
+        "name phone email alternatePhone address city state country"
       )
+      .populate({
+        path: "booking",
+        select:
+          "eventName eventType eventDate eventTime guests location description total status foodMenu services subtotal discountAmount additionalCharges gstEnabled gstRate gstAmount currency paidAmount advancePayment paymentStatus client name email phone",
+        populate: {
+          path: "client",
+          select: "name phone email alternatePhone address city state country",
+        },
+      })
       .populate(
         "createdBy",
         "name email role"

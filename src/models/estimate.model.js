@@ -317,7 +317,8 @@ const estimateSchema = new mongoose.Schema(
 
     description: {
       type: String,
-      required: [true, "Event description is required"],
+      required: false,
+      default: "",
       trim: true,
       maxlength: 2000,
     },

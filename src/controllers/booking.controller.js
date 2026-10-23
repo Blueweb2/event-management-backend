@@ -40,11 +40,10 @@ const createBooking = async (req, res, next) => {
       !eventTime ||
       guests === undefined ||
       guests === null ||
-      !location ||
-      !description
+      !location
     ) {
       const error = new Error(
-        "Event name, type, date, time, guests, location and description are required"
+        "Event name, type, date, time, guests and location are required"
       );
 
       error.statusCode = 400;

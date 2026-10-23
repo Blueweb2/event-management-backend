@@ -76,7 +76,8 @@ const upsertRecipe = async (req, res, next) => {
   try {
     const recipe = await departmentWorkflowService.upsertRecipe({
       ...req.body,
-      userId: req.user.userId,
+      userId: req.user?.userId || req.user?._id,
+      user: req.user,
     });
     res.status(200).json({
       success: true,

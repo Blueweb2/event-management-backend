@@ -92,12 +92,6 @@ const createEstimate = async ({
     );
   }
 
-  if (!description?.trim()) {
-    throw new Error(
-      "Event description is required",
-    );
-  }
-
   // ========================================
   // Client validation
   // ========================================
@@ -342,7 +336,7 @@ const createEstimate = async ({
         location.trim(),
 
       description:
-        description.trim(),
+        description ? description.trim() : "",
 
       // ------------------------------------
       // Client
@@ -1050,12 +1044,7 @@ const updateEstimate = async (
   }
 
   if (description !== undefined) {
-    if (!description?.trim()) {
-      const error = new Error("Event description cannot be empty");
-      error.statusCode = 400;
-      throw error;
-    }
-    estimate.description = description.trim();
+    estimate.description = description ? description.trim() : "";
   }
 
   // Update client details if provided

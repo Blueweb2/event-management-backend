@@ -259,7 +259,7 @@ const createBooking = async ({
 
     location: location.trim(),
 
-    description: description.trim(),
+    description: description?.trim() || "",
 
     // ========================================
     // Booking Message

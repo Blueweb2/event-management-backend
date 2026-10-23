@@ -13,6 +13,7 @@ const {
   DEFAULT_DEPARTMENT_PERMISSIONS,
 } = require("../utils/department.constants");
 const { convertStockToIngredientUnit } = require("../utils/unitConverter");
+const { isAuthorizedForKitchenStock } = require("../utils/stockAuth");
 
 // ==========================================
 // 1. DEPARTMENT USER INFO
@@ -262,23 +263,33 @@ const getRecipes = async ({ search = "", category = "" } = {}) => {
   }
 
   return Recipe.find(query)
-    .populate("foodItem", "name category dietary defaultRate")
-    .populate("ingredients.stockItem", "name category availableQuantity unit")
+    .populate("foodItem", "name category dietary defaultRate active imageUrl")
+    .populate("ingredients.stockItem", "name category availableQuantity unit totalQuantity stockType isRentable")
     .sort({ foodItemName: 1 });
 };
 
 const getRecipeByFoodItem = async (foodItemId) => {
-  let recipe = await Recipe.findOne({ foodItem: foodItemId })
-    .populate("foodItem")
-    .populate("ingredients.stockItem");
+  let recipe = null;
+  if (mongoose.Types.ObjectId.isValid(foodItemId)) {
+    recipe = await Recipe.findOne({ foodItem: foodItemId })
+      .populate("foodItem", "name category dietary defaultRate active imageUrl")
+      .populate("ingredients.stockItem", "name category availableQuantity unit totalQuantity stockType isRentable");
+  }
 
   if (!recipe) {
-    // Also try matching by name
-    const foodItem = await FoodItem.findById(foodItemId);
+    let foodItem = null;
+    if (mongoose.Types.ObjectId.isValid(foodItemId)) {
+      foodItem = await FoodItem.findById(foodItemId);
+    }
+    if (!foodItem && typeof foodItemId === "string") {
+      foodItem = await FoodItem.findOne({ name: foodItemId.trim() });
+    }
     if (foodItem) {
-      recipe = await Recipe.findOne({ foodItemName: foodItem.name })
-        .populate("foodItem")
-        .populate("ingredients.stockItem");
+      recipe = await Recipe.findOne({
+        $or: [{ foodItem: foodItem._id }, { foodItemName: foodItem.name }],
+      })
+        .populate("foodItem", "name category dietary defaultRate active imageUrl")
+        .populate("ingredients.stockItem", "name category availableQuantity unit totalQuantity stockType isRentable");
     }
   }
 
@@ -295,6 +306,7 @@ const upsertRecipe = async ({
   preparationSteps = [],
   notes = "",
   userId = null,
+  user = null,
 }) => {
   if (!foodItemId && !foodItemName) {
     const error = new Error("Food item or food item name is required");
@@ -302,25 +314,158 @@ const upsertRecipe = async ({
     throw error;
   }
 
+  // 1. Resolve Food Item document
   let foodItemDoc = null;
   if (foodItemId) {
+    if (!mongoose.Types.ObjectId.isValid(foodItemId)) {
+      const error = new Error("Invalid food item ID format");
+      error.statusCode = 400;
+      throw error;
+    }
     foodItemDoc = await FoodItem.findById(foodItemId);
+    if (!foodItemDoc) {
+      const error = new Error("Food item not found");
+      error.statusCode = 404;
+      throw error;
+    }
   } else if (foodItemName) {
     foodItemDoc = await FoodItem.findOne({ name: foodItemName.trim() });
+    if (!foodItemDoc) {
+      const error = new Error(`Food item "${foodItemName}" not found`);
+      error.statusCode = 404;
+      throw error;
+    }
+  }
+
+  // 2. Department authorization check if user context is provided
+  if (user && !isAuthorizedForKitchenStock(user)) {
+    const error = new Error(
+      "Access denied: Only authorized kitchen personnel or administrators can manage recipes."
+    );
+    error.statusCode = 403;
+    throw error;
   }
 
   const finalName = foodItemDoc ? foodItemDoc.name : foodItemName.trim();
   const finalCategory = foodItemDoc ? foodItemDoc.category : category;
   const targetFoodItemId = foodItemDoc ? foodItemDoc._id : new mongoose.Types.ObjectId();
 
-  // Validate ingredients format
-  const sanitizedIngredients = ingredients.map((ing) => ({
-    name: ing.name.trim(),
-    quantityPerServing: Math.max(0, Number(ing.quantityPerServing) || 0),
-    unit: ing.unit ? ing.unit.trim() : "kg",
-    stockItem: ing.stockItem || null,
-    notes: ing.notes ? ing.notes.trim() : "",
-  }));
+  // 3. Validate Yield Servings (must be >= 1)
+  const parsedYield = Number(yieldServings);
+  if (!Number.isFinite(parsedYield) || parsedYield < 1) {
+    const error = new Error("Yield servings must be a number of at least 1");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // 4. Validate Wastage Percent (must be between 0 and 100)
+  const parsedWastage = Number(defaultWastagePercent);
+  if (!Number.isFinite(parsedWastage) || parsedWastage < 0 || parsedWastage > 100) {
+    const error = new Error("Default wastage percent must be between 0 and 100");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // 5. Validate Ingredients
+  if (!Array.isArray(ingredients)) {
+    const error = new Error("Ingredients must be provided as an array");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const INGREDIENT_CATEGORIES = ["Raw Ingredients", "Kitchen Supplies"];
+  const seenStockIds = new Set();
+  const sanitizedIngredients = [];
+
+  for (let idx = 0; idx < ingredients.length; idx++) {
+    const ing = ingredients[idx];
+    const name = (ing.name || "").trim();
+    if (!name && !ing.stockItem && !ing.stockItemId) {
+      const error = new Error(`Ingredient #${idx + 1} requires a valid name`);
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const qty = Number(ing.quantityPerServing);
+    if (!Number.isFinite(qty) || qty <= 0) {
+      const error = new Error(
+        `Quantity per serving for ingredient "${name || `#${idx + 1}`}" must be greater than zero`
+      );
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const unit = (ing.unit || "kg").trim();
+    if (!unit) {
+      const error = new Error(`Unit is required for ingredient "${name || `#${idx + 1}`}"`);
+      error.statusCode = 400;
+      throw error;
+    }
+
+    let resolvedStockId = null;
+    let resolvedStockName = name;
+
+    const rawStockRef = ing.stockItem || ing.stockItemId;
+    if (rawStockRef) {
+      const stockIdStr =
+        typeof rawStockRef === "object" && rawStockRef._id
+          ? rawStockRef._id.toString()
+          : String(rawStockRef).trim();
+
+      if (!mongoose.Types.ObjectId.isValid(stockIdStr)) {
+        const error = new Error(
+          `Invalid stock item ID format for ingredient "${name || `#${idx + 1}`}"`
+        );
+        error.statusCode = 400;
+        throw error;
+      }
+
+      if (seenStockIds.has(stockIdStr)) {
+        const error = new Error(
+          `Duplicate stock item detected: Stock item is already linked in this recipe`
+        );
+        error.statusCode = 400;
+        throw error;
+      }
+      seenStockIds.add(stockIdStr);
+
+      const stockDoc = await StockItem.findById(stockIdStr);
+      if (!stockDoc) {
+        const error = new Error(
+          `Linked stock item for ingredient "${name || stockIdStr}" was not found or has been removed from inventory`
+        );
+        error.statusCode = 404;
+        throw error;
+      }
+
+      // Check eligibility: must be kitchen stock (Raw Ingredients or Kitchen Supplies, not Equipment, not rentable)
+      const isKitchenEligible =
+        (stockDoc.stockType === "kitchen" || INGREDIENT_CATEGORIES.includes(stockDoc.category)) &&
+        stockDoc.category !== "Kitchen Equipment" &&
+        !stockDoc.isRentable;
+
+      if (!isKitchenEligible) {
+        const error = new Error(
+          `Stock item "${stockDoc.name}" (${stockDoc.category}) is not eligible as a recipe ingredient. Only raw ingredients and consumable kitchen supplies can be linked.`
+        );
+        error.statusCode = 400;
+        throw error;
+      }
+
+      resolvedStockId = stockDoc._id;
+      if (!resolvedStockName) {
+        resolvedStockName = stockDoc.name;
+      }
+    }
+
+    sanitizedIngredients.push({
+      name: resolvedStockName,
+      quantityPerServing: qty,
+      unit,
+      stockItem: resolvedStockId,
+      notes: ing.notes ? String(ing.notes).trim() : "",
+    });
+  }
 
   const recipe = await Recipe.findOneAndUpdate(
     {
@@ -334,8 +479,8 @@ const upsertRecipe = async ({
         foodItem: targetFoodItemId,
         foodItemName: finalName,
         category: finalCategory,
-        yieldServings: Math.max(1, Number(yieldServings) || 1),
-        defaultWastagePercent: Math.max(0, Math.min(100, Number(defaultWastagePercent) || 5)),
+        yieldServings: parsedYield,
+        defaultWastagePercent: parsedWastage,
         ingredients: sanitizedIngredients,
         preparationSteps: Array.isArray(preparationSteps) ? preparationSteps : [],
         notes: notes ? notes.trim() : "",
@@ -350,7 +495,9 @@ const upsertRecipe = async ({
       upsert: true,
       runValidators: true,
     }
-  );
+  )
+    .populate("foodItem", "name category dietary defaultRate active imageUrl")
+    .populate("ingredients.stockItem", "name category availableQuantity unit totalQuantity stockType isRentable");
 
   return recipe;
 };
@@ -546,11 +693,13 @@ const calculateKitchenIngredients = async (eventId, { wastageAllowancePercent = 
         statusLabel,
       });
 
-      // Aggregate across recipes (by ingredient name and target unit)
-      const aggKey = `${ing.name.toLowerCase().trim()}_${ing.unit.toLowerCase().trim()}`;
+      // Aggregate across recipes (by matched stock item if linked, or by ingredient name + target unit)
+      const aggKey = matchedStock
+        ? `stock_${matchedStock._id.toString()}_${ing.unit.toLowerCase().trim()}`
+        : `${ing.name.toLowerCase().trim()}_${ing.unit.toLowerCase().trim()}`;
       if (!aggregatedIngredientsMap.has(aggKey)) {
         aggregatedIngredientsMap.set(aggKey, {
-          name: ing.name,
+          name: matchedStock ? matchedStock.name : ing.name,
           unit: ing.unit,
           requiredQuantity: 0,
           availableQuantity: availableQty,
@@ -768,10 +917,10 @@ const getDepartmentTasks = async ({ department, eventId = null }) => {
     return dDept === normDept || normDept === "Operations";
   });
 
-  // Collect tasks from matching duties
+  // Collect tasks from matching duties (including duty.tasks and duty.checklist)
   const allTasks = [];
   matchingDuties.forEach((duty) => {
-    if (Array.isArray(duty.tasks)) {
+    if (Array.isArray(duty.tasks) && duty.tasks.length > 0) {
       duty.tasks.forEach((t) => {
         allTasks.push({
           id: t._id,
@@ -783,13 +932,36 @@ const getDepartmentTasks = async ({ department, eventId = null }) => {
           staffName: duty.staff?.name || "Unassigned",
           department: duty.department || normDept,
           title: t.title,
-          description: t.description,
+          description: t.description || "",
           status: t.status,
           plannedStartAt: t.plannedStartAt,
           plannedEndAt: t.plannedEndAt,
           actualStartAt: t.actualStartAt,
           actualEndAt: t.actualEndAt,
           completionNotes: t.completionNotes,
+        });
+      });
+    }
+
+    if (Array.isArray(duty.checklist) && duty.checklist.length > 0) {
+      duty.checklist.forEach((c) => {
+        allTasks.push({
+          id: c._id,
+          dutyId: duty._id,
+          dutyTitle: duty.dutyTitle,
+          eventId: duty.event?._id || duty.event,
+          eventName: duty.event?.eventName || "Event",
+          eventDate: duty.event?.eventDate,
+          staffName: duty.staff?.name || "Unassigned",
+          department: duty.department || normDept,
+          title: c.text,
+          description: "",
+          status: c.completed ? "COMPLETED" : "PENDING",
+          plannedStartAt: null,
+          plannedEndAt: null,
+          actualStartAt: null,
+          actualEndAt: null,
+          completionNotes: "",
         });
       });
     }
@@ -872,56 +1044,171 @@ const createDepartmentTask = async ({
 };
 
 const updateDepartmentTaskStatus = async (dutyId, taskId, { status, notes, userId }) => {
-  const duty = await Duty.findById(dutyId);
+  let duty = await Duty.findById(dutyId);
+  if (!duty) {
+    duty = await Duty.findOne({
+      $or: [
+        { "tasks._id": taskId },
+        { "checklist._id": taskId },
+      ],
+    });
+  }
+
   if (!duty) {
     const error = new Error("Duty not found");
     error.statusCode = 404;
     throw error;
   }
 
-  const task = duty.tasks.id(taskId);
-  if (!task) {
-    const error = new Error("Task not found in duty");
-    error.statusCode = 404;
-    throw error;
+  // 1. Try finding in duty.tasks
+  let task = typeof duty.tasks?.id === "function" ? duty.tasks.id(taskId) : null;
+  if (!task && Array.isArray(duty.tasks)) {
+    task = duty.tasks.find((t) => String(t._id || t.id) === String(taskId));
   }
 
-  if (status) {
-    task.status = status;
-    if (status === "COMPLETED") {
-      task.actualEndAt = new Date();
-      task.completedBy = userId;
-    } else if (status === "IN_PROGRESS" && !task.actualStartAt) {
-      task.actualStartAt = new Date();
-      task.startedBy = userId;
+  if (task) {
+    if (status) {
+      task.status = status;
+      if (status === "COMPLETED") {
+        task.actualEndAt = new Date();
+        task.completedBy = userId;
+      } else if (status === "IN_PROGRESS" && !task.actualStartAt) {
+        task.actualStartAt = new Date();
+        task.startedBy = userId;
+      }
     }
+
+    if (notes) {
+      task.completionNotes = notes.trim();
+    }
+
+    await duty.save();
+    return task;
   }
 
-  if (notes) {
-    task.completionNotes = notes.trim();
+  // 2. Try finding in duty.checklist
+  let checkItem = typeof duty.checklist?.id === "function" ? duty.checklist.id(taskId) : null;
+  if (!checkItem && Array.isArray(duty.checklist)) {
+    checkItem = duty.checklist.find((c) => String(c._id || c.id) === String(taskId));
   }
 
-  await duty.save();
-  return task;
+  if (checkItem) {
+    if (status) {
+      checkItem.completed = status === "COMPLETED";
+    }
+    await duty.save();
+    return {
+      _id: checkItem._id,
+      title: checkItem.text,
+      status: checkItem.completed ? "COMPLETED" : "PENDING",
+    };
+  }
+
+  // 3. Fallback: Check standalone Task collection
+  try {
+    const standaloneTask = await Task.findById(taskId);
+    if (standaloneTask) {
+      if (status) standaloneTask.status = status;
+      if (notes) standaloneTask.notes = notes.trim();
+      await standaloneTask.save();
+      return standaloneTask;
+    }
+  } catch (_) {}
+
+  const error = new Error("Task not found in duty");
+  error.statusCode = 404;
+  throw error;
 };
 
 const deleteDepartmentTask = async (dutyId, taskId) => {
-  const duty = await Duty.findById(dutyId);
+  let duty = await Duty.findById(dutyId);
+
+  // If duty not found by dutyId, try finding duty containing this task
   if (!duty) {
-    const error = new Error("Duty not found");
-    error.statusCode = 404;
-    throw error;
+    duty = await Duty.findOne({
+      $or: [
+        { "tasks._id": taskId },
+        { "checklist._id": taskId },
+      ],
+    });
   }
 
-  const task = duty.tasks.id(taskId);
-  if (!task) {
-    const error = new Error("Task not found in duty");
-    error.statusCode = 404;
-    throw error;
+  if (duty) {
+    // 1. Try finding in duty.tasks
+    const taskIndex = duty.tasks?.findIndex(
+      (t) => String(t._id || t.id) === String(taskId)
+    );
+    if (taskIndex !== undefined && taskIndex !== -1) {
+      duty.tasks.splice(taskIndex, 1);
+      await duty.save();
+      return { message: "Task deleted successfully", taskId };
+    }
+
+    if (typeof duty.tasks?.id === "function") {
+      const taskDoc = duty.tasks.id(taskId);
+      if (taskDoc) {
+        duty.tasks.pull(taskId);
+        await duty.save();
+        return { message: "Task deleted successfully", taskId };
+      }
+    }
+
+    // 2. Try finding in duty.checklist
+    const checkIndex = duty.checklist?.findIndex(
+      (c) => String(c._id || c.id) === String(taskId)
+    );
+    if (checkIndex !== undefined && checkIndex !== -1) {
+      duty.checklist.splice(checkIndex, 1);
+      await duty.save();
+      return { message: "Task deleted successfully", taskId };
+    }
+
+    if (typeof duty.checklist?.id === "function") {
+      const checkDoc = duty.checklist.id(taskId);
+      if (checkDoc) {
+        duty.checklist.pull(taskId);
+        await duty.save();
+        return { message: "Task deleted successfully", taskId };
+      }
+    }
   }
 
-  duty.tasks.pull(taskId);
-  await duty.save();
+  // 3. Fallback: Search all duties in case dutyId was mismatched
+  const anyDuty = await Duty.findOne({
+    $or: [
+      { "tasks._id": taskId },
+      { "checklist._id": taskId },
+    ],
+  });
+  if (anyDuty) {
+    const tIdx = anyDuty.tasks?.findIndex(
+      (t) => String(t._id || t.id) === String(taskId)
+    );
+    if (tIdx !== undefined && tIdx !== -1) {
+      anyDuty.tasks.splice(tIdx, 1);
+      await anyDuty.save();
+      return { message: "Task deleted successfully", taskId };
+    }
+
+    const cIdx = anyDuty.checklist?.findIndex(
+      (c) => String(c._id || c.id) === String(taskId)
+    );
+    if (cIdx !== undefined && cIdx !== -1) {
+      anyDuty.checklist.splice(cIdx, 1);
+      await anyDuty.save();
+      return { message: "Task deleted successfully", taskId };
+    }
+  }
+
+  // 4. Try finding in standalone Task collection
+  try {
+    const deleted = await Task.findByIdAndDelete(taskId);
+    if (deleted) {
+      return { message: "Task deleted successfully", taskId };
+    }
+  } catch (_) {}
+
+  // 5. If task is already gone from database, return success (DELETE is idempotent)
   return { message: "Task deleted successfully", taskId };
 };
 

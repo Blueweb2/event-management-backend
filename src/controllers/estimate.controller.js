@@ -101,14 +101,6 @@ const createEstimateController = async (
       });
     }
 
-    if (!description?.trim()) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Event description is required",
-      });
-    }
-
     // ========================================
     // Client Validation
     // ========================================
@@ -252,7 +244,7 @@ const createEstimateController = async (
           location.trim(),
 
         description:
-          description.trim(),
+          description?.trim() || "",
 
         // ------------------------------------
         // Client
