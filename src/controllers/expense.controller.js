@@ -58,6 +58,21 @@ const toggleExpenseStatus = async (req, res, next) => {
 const getEventProfitability = async (req, res, next) => {
   try {
     const result = await expenseService.getEventProfitability(req.params.eventId);
+    const userRole = (req.user?.role || "").toLowerCase();
+    const isSuperAdmin = userRole === "superadmin" || userRole === "admin";
+
+    // Net Operating Profit should only be viewed by Super Admin
+    if (!isSuperAdmin && result) {
+      result.profitability = {
+        netProfit: null,
+        profitMargin: null,
+        healthStatus: null,
+      };
+      if (result.revenue) {
+        result.revenue = null;
+      }
+    }
+
     res.json({ success: true, data: result });
   } catch (error) {
     next(error);

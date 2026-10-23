@@ -225,6 +225,17 @@ const getActivityTimeline = async (req, res, next) => {
 
 const recordEventPayment = async (req, res, next) => {
   try {
+    // Only Super Admin can record client payments
+    const userRole = (req.user?.role || "").toLowerCase();
+    const isSuperAdmin = userRole === "superadmin" || userRole === "admin";
+
+    if (!isSuperAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. Only Super Admin is authorized to record client payments.",
+      });
+    }
+
     const { id } = req.params;
     const event = await Event.findById(id);
     if (!event) {

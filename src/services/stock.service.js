@@ -355,6 +355,7 @@ const getStockItemById = async (id, userOrId = null) => {
   const recentTransactions = await StockTransaction.find({ stockItem: id })
     .sort({ createdAt: -1 })
     .limit(50)
+    .populate("stockItem", "name category unit stockType sku")
     .populate("performedBy", "name email role")
     .populate("event", "eventName eventDate location");
 
@@ -1702,7 +1703,7 @@ const getStockTransactions = async (query = {}, userOrId = null) => {
     .sort({ createdAt: -1 })
     .skip((Number(page) - 1) * Number(limit))
     .limit(Number(limit))
-    .populate("stockItem", "name category unit stockType")
+    .populate("stockItem", "name category unit stockType sku")
     .populate("event", "eventName eventDate location")
     .populate("performedBy", "name email role");
 
