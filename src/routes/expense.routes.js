@@ -50,8 +50,18 @@ const upload = multer({
   },
 });
 
+const requireSuperAdmin = (req, res, next) => {
+  const role = (req.user?.role || "").toLowerCase();
+  if (role === "superadmin" || role === "admin") return next();
+  return res.status(403).json({
+    success: false,
+    message: "Access denied: Expense records and management are restricted to Super Admin only.",
+  });
+};
+
 const router = express.Router();
 router.use(authenticate);
+router.use(requireSuperAdmin);
 
 router.get("/creators", authorize("Manager", "Staff"), getExpenseCreators);
 router.get("/event/:eventId/profitability", authorize("Manager"), getEventProfitability);
