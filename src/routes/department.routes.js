@@ -13,6 +13,9 @@ const {
   calculateKitchenIngredients,
   createKitchenPurchaseRequest,
   getKitchenPurchaseRequests,
+  getKitchenPurchaseRequestById,
+  reviewKitchenPurchaseRequest,
+  receiveKitchenPurchaseRequest,
   getKitchenTasks,
   createKitchenTask,
   updateKitchenTaskStatus,
@@ -129,6 +132,27 @@ router.get(
   authenticate,
   requireDepartmentAccess("Kitchen"),
   getKitchenPurchaseRequests
+);
+
+router.get(
+  "/kitchen/purchase-requests/:id",
+  authenticate,
+  requireDepartmentAccess("Kitchen"),
+  getKitchenPurchaseRequestById
+);
+
+router.patch(
+  "/kitchen/purchase-requests/:id/review",
+  authenticate,
+  requireDepartmentAccess("Kitchen"),
+  reviewKitchenPurchaseRequest
+);
+
+router.post(
+  "/kitchen/purchase-requests/:id/receive",
+  authenticate,
+  requireDepartmentAccess("Kitchen"),
+  receiveKitchenPurchaseRequest
 );
 
 router.get(

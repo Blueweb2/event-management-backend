@@ -4,6 +4,7 @@ const Booking = require("../models/booking.model");
 const FoodItem = require("../models/foodItem.model");
 const Recipe = require("../models/recipe.model");
 const StockItem = require("../models/stockItem.model");
+const StockTransaction = require("../models/stockTransaction.model");
 const PurchaseRequest = require("../models/purchaseRequest.model");
 const Duty = require("../models/duty.model");
 const Task = require("../models/task.model");
@@ -12,8 +13,61 @@ const {
   normalizeDepartment,
   DEFAULT_DEPARTMENT_PERMISSIONS,
 } = require("../utils/department.constants");
-const { convertStockToIngredientUnit } = require("../utils/unitConverter");
+const {
+  convertStockToIngredientUnit,
+  normalizeUnitString,
+} = require("../utils/unitConverter");
 const { isAuthorizedForKitchenStock } = require("../utils/stockAuth");
+const { getIO } = require("../socket");
+
+// Helper to safely emit socket events if available
+const emitStockEvent = (eventName, data) => {
+  try {
+    const io = getIO();
+    if (io) {
+      io.emit(eventName, data);
+    }
+  } catch (err) {
+    // Non-fatal if socket not ready
+  }
+};
+
+/**
+ * Helper to run operations within a MongoDB transaction if replica set is active,
+ * with graceful fallback to standard execution for standalone MongoDB instances.
+ */
+const runInTransaction = async (operation) => {
+  let session = null;
+  try {
+    session = await mongoose.startSession();
+    session.startTransaction();
+    const result = await operation(session);
+    await session.commitTransaction();
+    return result;
+  } catch (err) {
+    if (session) {
+      try {
+        await session.abortTransaction();
+      } catch (abortErr) {
+        // Ignore abort failure
+      }
+    }
+    if (
+      err.message &&
+      (err.message.includes("replica set") ||
+        err.message.includes("Transaction numbers are only allowed") ||
+        err.message.includes("standalone") ||
+        err.message.includes("This MongoDB deployment does not support retryable writes"))
+    ) {
+      return await operation(null);
+    }
+    throw err;
+  } finally {
+    if (session) {
+      session.endSession();
+    }
+  }
+};
 
 // ==========================================
 // 1. DEPARTMENT USER INFO
@@ -809,10 +863,6 @@ const calculateKitchenIngredients = async (eventId, { wastageAllowancePercent = 
   };
 };
 
-// ==========================================
-// 3. PURCHASE REQUESTS (Shortage Requisitions)
-// ==========================================
-
 const createPurchaseRequest = async ({
   department,
   eventId = null,
@@ -856,11 +906,39 @@ const createPurchaseRequest = async ({
     });
 
     if (existingPending) {
-      existingPending.items = validItems;
+      // Merge items non-destructively: update matching items or append new items
+      for (const newItem of validItems) {
+        const existingIdx = existingPending.items.findIndex((ex) => {
+          if (newItem.stockItem && ex.stockItem) {
+            return String(ex.stockItem) === String(newItem.stockItem);
+          }
+          return ex.itemName.trim().toLowerCase() === newItem.itemName.trim().toLowerCase();
+        });
+
+        if (existingIdx !== -1) {
+          const matched = existingPending.items[existingIdx];
+          matched.requiredQuantity = newItem.requiredQuantity;
+          matched.availableQuantity = newItem.availableQuantity;
+          matched.shortageQuantity = newItem.shortageQuantity;
+          matched.unit = newItem.unit || matched.unit;
+          matched.estimatedCost = newItem.estimatedCost || matched.estimatedCost;
+          matched.urgency = newItem.urgency || matched.urgency;
+          matched.stockItem = newItem.stockItem || matched.stockItem;
+          if (newItem.notes) matched.notes = newItem.notes;
+        } else {
+          existingPending.items.push(newItem);
+        }
+      }
+
       if (notes) existingPending.notes = notes.trim();
       existingPending.requestedBy = userId;
       await existingPending.save();
-      return existingPending.populate("requestedBy", "name email role department");
+      return existingPending.populate([
+        { path: "requestedBy", select: "name email role department" },
+        { path: "approvedBy", select: "name email role department" },
+        { path: "event", select: "eventName eventDate location" },
+        { path: "items.stockItem", select: "name category unit totalQuantity availableQuantity" },
+      ]);
     }
   }
 
@@ -873,7 +951,12 @@ const createPurchaseRequest = async ({
     status: "PENDING",
   });
 
-  return purchaseRequest.populate("requestedBy", "name email role department");
+  return purchaseRequest.populate([
+    { path: "requestedBy", select: "name email role department" },
+    { path: "approvedBy", select: "name email role department" },
+    { path: "event", select: "eventName eventDate location" },
+    { path: "items.stockItem", select: "name category unit totalQuantity availableQuantity" },
+  ]);
 };
 
 const getPurchaseRequests = async ({ department = "", status = "" } = {}) => {
@@ -887,9 +970,353 @@ const getPurchaseRequests = async ({ department = "", status = "" } = {}) => {
 
   return PurchaseRequest.find(query)
     .populate("requestedBy", "name email role department")
-    .populate("approvedBy", "name email")
+    .populate("approvedBy", "name email role department")
     .populate("event", "eventName eventDate location")
+    .populate("receipts.receivedBy", "name email role department")
+    .populate("items.stockItem", "name category unit totalQuantity availableQuantity")
     .sort({ createdAt: -1 });
+};
+
+const getPurchaseRequestById = async (id) => {
+  const purchaseRequest = await PurchaseRequest.findById(id)
+    .populate("requestedBy", "name email role department")
+    .populate("approvedBy", "name email role department")
+    .populate("event", "eventName eventDate location")
+    .populate("receipts.receivedBy", "name email role department")
+    .populate("items.stockItem", "name category unit totalQuantity availableQuantity");
+
+  if (!purchaseRequest) {
+    const error = new Error("Purchase request not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  return purchaseRequest;
+};
+
+const reviewPurchaseRequest = async ({
+  requestId,
+  status, // "APPROVED", "REJECTED", "CANCELLED"
+  rejectionReason = "",
+  itemApprovals = [], // optional array of { itemId, approvedQuantity, status }
+  user,
+}) => {
+  const normalizedStatus = String(status || "").trim().toUpperCase();
+  if (!["APPROVED", "REJECTED", "CANCELLED"].includes(normalizedStatus)) {
+    const error = new Error("Invalid review status. Must be APPROVED, REJECTED, or CANCELLED");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // Authorization: Only admin, superadmin, or manager can review purchase requests
+  const role = String(user?.role || "").toLowerCase();
+  const isSuperAdmin = role === "superadmin";
+  const isAdmin = role === "admin";
+  const isManager = role === "manager";
+
+  if (!isSuperAdmin && !isAdmin && !isManager) {
+    const error = new Error("Access denied: You are not authorized to review purchase requests");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const purchaseRequest = await PurchaseRequest.findById(requestId);
+  if (!purchaseRequest) {
+    const error = new Error("Purchase request not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (normalizedStatus === "APPROVED" || normalizedStatus === "REJECTED") {
+    if (purchaseRequest.status !== "PENDING") {
+      const error = new Error(
+        `Cannot review request with status "${purchaseRequest.status}". Only PENDING requests can be approved or rejected`
+      );
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
+  if (normalizedStatus === "CANCELLED") {
+    if (["FULFILLED", "CANCELLED"].includes(purchaseRequest.status)) {
+      const error = new Error(`Cannot cancel a request that is already ${purchaseRequest.status}`);
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
+  if (normalizedStatus === "REJECTED" && (!rejectionReason || !rejectionReason.trim())) {
+    const error = new Error("Rejection reason is required when rejecting a purchase request");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  purchaseRequest.status = normalizedStatus;
+  purchaseRequest.approvedBy = user._id || user.userId || user.id;
+  purchaseRequest.approvedAt = new Date();
+  if (rejectionReason) {
+    purchaseRequest.rejectionReason = rejectionReason.trim();
+  }
+
+  // Update item level status and approved quantities
+  const approvalMap = new Map();
+  if (Array.isArray(itemApprovals)) {
+    itemApprovals.forEach((appr) => {
+      if (appr && appr.itemId) approvalMap.set(String(appr.itemId), appr);
+    });
+  }
+
+  purchaseRequest.items.forEach((item) => {
+    const itemOverride = approvalMap.get(String(item._id));
+    if (normalizedStatus === "APPROVED") {
+      const approvedQty =
+        itemOverride && itemOverride.approvedQuantity !== undefined
+          ? Math.max(0, Number(itemOverride.approvedQuantity))
+          : (item.approvedQuantity !== null && item.approvedQuantity !== undefined
+              ? item.approvedQuantity
+              : item.shortageQuantity);
+      item.approvedQuantity = approvedQty;
+      item.status = "APPROVED";
+    } else if (normalizedStatus === "REJECTED") {
+      item.status = "REJECTED";
+    }
+  });
+
+  await purchaseRequest.save();
+
+  return purchaseRequest.populate([
+    { path: "requestedBy", select: "name email role department" },
+    { path: "approvedBy", select: "name email role department" },
+    { path: "event", select: "eventName eventDate location" },
+    { path: "receipts.receivedBy", select: "name email role department" },
+    { path: "items.stockItem", select: "name category unit totalQuantity availableQuantity" },
+  ]);
+};
+
+const receivePurchaseRequestItems = async ({
+  requestId,
+  receivedItems = [], // [{ itemId, quantityReceived, unit, notes }]
+  notes = "",
+  idempotencyKey,
+  user,
+}) => {
+  if (!idempotencyKey || !String(idempotencyKey).trim()) {
+    const error = new Error("Idempotency key is required to prevent duplicate stock receipts");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!receivedItems || !Array.isArray(receivedItems) || receivedItems.length === 0) {
+    const error = new Error("At least one received item is required");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const role = String(user?.role || "").toLowerCase();
+  const isSuperAdmin = role === "superadmin";
+  const isAdmin = role === "admin";
+  const isManager = role === "manager";
+
+  if (!isSuperAdmin && !isAdmin && !isManager) {
+    const error = new Error(
+      "Access denied: You are not authorized to receive goods against purchase requests"
+    );
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const userId = user._id || user.userId || user.id;
+
+  return await runInTransaction(async (session) => {
+    const purchaseRequest = await PurchaseRequest.findById(requestId).session(session);
+    if (!purchaseRequest) {
+      const error = new Error("Purchase request not found");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    if (!["APPROVED", "PARTIALLY_FULFILLED"].includes(purchaseRequest.status)) {
+      const error = new Error(
+        `Cannot receive goods for purchase request in "${purchaseRequest.status}" status. Only APPROVED or PARTIALLY_FULFILLED requests can be received.`
+      );
+      error.statusCode = 400;
+      throw error;
+    }
+
+    // Idempotency check: Has this receiptId already been processed?
+    const existingReceipt = purchaseRequest.receipts.find(
+      (r) => r.receiptId === String(idempotencyKey).trim()
+    );
+    if (existingReceipt) {
+      return purchaseRequest.populate([
+        { path: "requestedBy", select: "name email role department" },
+        { path: "approvedBy", select: "name email role department" },
+        { path: "event", select: "eventName eventDate location" },
+        { path: "receipts.receivedBy", select: "name email role department" },
+        { path: "items.stockItem", select: "name category unit totalQuantity availableQuantity" },
+      ]);
+    }
+
+    const receiptItemsRecord = [];
+    const updatedStockItems = [];
+
+    for (const rec of receivedItems) {
+      const reqItem = purchaseRequest.items.id(rec.itemId);
+      if (!reqItem) {
+        const error = new Error(`Item ${rec.itemId} does not belong to this purchase request`);
+        error.statusCode = 400;
+        throw error;
+      }
+
+      const rawQty = Number(rec.quantityReceived);
+      if (!Number.isFinite(rawQty) || rawQty <= 0) {
+        continue;
+      }
+
+      const receivedUnit = rec.unit ? rec.unit.trim() : reqItem.unit;
+
+      // Find or link stock item
+      let stockItemDoc = null;
+      if (reqItem.stockItem) {
+        stockItemDoc = await StockItem.findById(reqItem.stockItem).session(session);
+      }
+      if (!stockItemDoc) {
+        stockItemDoc = await StockItem.findOne({
+          name: { $regex: new RegExp(`^${reqItem.itemName.trim()}$`, "i") },
+          $or: [
+            { category: { $in: ["Raw Ingredients", "Kitchen Supplies", "Kitchen Equipment"] } },
+            { stockType: "kitchen" },
+            { department: "Kitchen" },
+          ],
+        }).session(session);
+      }
+
+      let quantityToAdd = rawQty;
+      if (stockItemDoc) {
+        // Convert unit if different
+        if (
+          receivedUnit &&
+          stockItemDoc.unit &&
+          normalizeUnitString(receivedUnit) !== normalizeUnitString(stockItemDoc.unit)
+        ) {
+          const conv = convertStockToIngredientUnit(rawQty, receivedUnit, stockItemDoc.unit);
+          if (!conv.isCompatible) {
+            const err = new Error(
+              `Cannot receive item "${stockItemDoc.name}" in unit "${receivedUnit}". Warehouse inventory is tracked in "${stockItemDoc.unit}". ${conv.warning || ""}`
+            );
+            err.statusCode = 400;
+            throw err;
+          }
+          quantityToAdd = conv.convertedQuantity;
+        }
+
+        const prevTotal = stockItemDoc.totalQuantity;
+        const prevAvailable = stockItemDoc.availableQuantity;
+
+        stockItemDoc.totalQuantity =
+          Math.round((stockItemDoc.totalQuantity + quantityToAdd) * 10000) / 10000;
+        stockItemDoc.availableQuantity =
+          Math.round((stockItemDoc.availableQuantity + quantityToAdd) * 10000) / 10000;
+        stockItemDoc.updatedBy = userId;
+        await stockItemDoc.save({ session });
+
+        await StockTransaction.create(
+          [
+            {
+              stockItem: stockItemDoc._id,
+              event: purchaseRequest.event || null,
+              type: "ADDED",
+              quantity: quantityToAdd,
+              previousAvailable: prevAvailable,
+              newAvailable: stockItemDoc.availableQuantity,
+              previousTotal: prevTotal,
+              newTotal: stockItemDoc.totalQuantity,
+              performedBy: userId,
+              notes: notes
+                ? `Received against PR #${purchaseRequest._id.toString().slice(-6)}: ${notes}`
+                : `Received ${rawQty} ${receivedUnit} against Purchase Request`,
+            },
+          ],
+          { session }
+        );
+
+        updatedStockItems.push(stockItemDoc);
+        reqItem.stockItem = stockItemDoc._id;
+      }
+
+      // Convert quantity to reqItem.unit if needed for accurate tracking
+      let qtyInItemUnit = rawQty;
+      if (
+        receivedUnit &&
+        reqItem.unit &&
+        normalizeUnitString(receivedUnit) !== normalizeUnitString(reqItem.unit)
+      ) {
+        const convItem = convertStockToIngredientUnit(rawQty, receivedUnit, reqItem.unit);
+        if (convItem.isCompatible && convItem.convertedQuantity !== null) {
+          qtyInItemUnit = convItem.convertedQuantity;
+        }
+      }
+
+      reqItem.receivedQuantity =
+        Math.round(((reqItem.receivedQuantity || 0) + qtyInItemUnit) * 10000) / 10000;
+      const targetQty =
+        reqItem.approvedQuantity !== null && reqItem.approvedQuantity !== undefined
+          ? reqItem.approvedQuantity
+          : reqItem.shortageQuantity;
+
+      if (reqItem.receivedQuantity >= targetQty) {
+        reqItem.status = "FULFILLED";
+      } else {
+        reqItem.status = "PARTIALLY_FULFILLED";
+      }
+
+      receiptItemsRecord.push({
+        itemId: reqItem._id,
+        itemName: reqItem.itemName,
+        quantityReceived: rawQty,
+        unit: receivedUnit,
+        stockItem: stockItemDoc ? stockItemDoc._id : null,
+      });
+    }
+
+    if (receiptItemsRecord.length === 0) {
+      const error = new Error("No valid positive received quantities provided");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    // Determine overall request status
+    const allFulfilled = purchaseRequest.items.every(
+      (item) =>
+        item.status === "FULFILLED" ||
+        item.receivedQuantity >= (item.approvedQuantity ?? item.shortageQuantity)
+    );
+    purchaseRequest.status = allFulfilled ? "FULFILLED" : "PARTIALLY_FULFILLED";
+
+    // Append receipt history
+    purchaseRequest.receipts.push({
+      receiptId: String(idempotencyKey).trim(),
+      receivedBy: userId,
+      receivedAt: new Date(),
+      items: receiptItemsRecord,
+      notes: notes ? notes.trim() : "",
+    });
+
+    await purchaseRequest.save({ session });
+
+    // Emit live socket updates
+    updatedStockItems.forEach((item) => {
+      emitStockEvent("stock:itemUpdated", item);
+    });
+
+    return purchaseRequest.populate([
+      { path: "requestedBy", select: "name email role department" },
+      { path: "approvedBy", select: "name email role department" },
+      { path: "event", select: "eventName eventDate location" },
+      { path: "receipts.receivedBy", select: "name email role department" },
+      { path: "items.stockItem", select: "name category unit totalQuantity availableQuantity" },
+    ]);
+  });
 };
 
 // ==========================================
@@ -1421,6 +1848,9 @@ module.exports = {
   calculateKitchenIngredients,
   createPurchaseRequest,
   getPurchaseRequests,
+  getPurchaseRequestById,
+  reviewPurchaseRequest,
+  receivePurchaseRequestItems,
   getDepartmentTasks,
   createDepartmentTask,
   updateDepartmentTaskStatus,

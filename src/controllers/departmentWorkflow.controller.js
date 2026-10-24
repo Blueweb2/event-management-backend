@@ -147,6 +147,67 @@ const getKitchenPurchaseRequests = async (req, res, next) => {
   }
 };
 
+const getKitchenPurchaseRequestById = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const request = await departmentWorkflowService.getPurchaseRequestById(id);
+
+    res.status(200).json({
+      success: true,
+      data: request,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const reviewKitchenPurchaseRequest = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { status, rejectionReason, itemApprovals } = req.body;
+    const request = await departmentWorkflowService.reviewPurchaseRequest({
+      requestId: id,
+      status,
+      rejectionReason,
+      itemApprovals,
+      user: req.user,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Purchase request ${request.status.toLowerCase()} successfully`,
+      data: request,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const receiveKitchenPurchaseRequest = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { receivedItems, notes, idempotencyKey } = req.body;
+    const request = await departmentWorkflowService.receivePurchaseRequestItems({
+      requestId: id,
+      receivedItems,
+      notes,
+      idempotencyKey:
+        idempotencyKey ||
+        req.headers["x-idempotency-key"] ||
+        req.headers["idempotency-key"],
+      user: req.user,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Goods received and warehouse inventory updated successfully",
+      data: request,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const getKitchenTasks = async (req, res, next) => {
   try {
     const { eventId } = req.query;
@@ -398,6 +459,9 @@ module.exports = {
   calculateKitchenIngredients,
   createKitchenPurchaseRequest,
   getKitchenPurchaseRequests,
+  getKitchenPurchaseRequestById,
+  reviewKitchenPurchaseRequest,
+  receiveKitchenPurchaseRequest,
   getKitchenTasks,
   createKitchenTask,
   updateKitchenTaskStatus,

@@ -44,6 +44,21 @@ const purchaseRequestItemSchema = new mongoose.Schema(
       ref: "StockItem",
       default: null,
     },
+    approvedQuantity: {
+      type: Number,
+      default: null,
+      min: 0,
+    },
+    receivedQuantity: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    status: {
+      type: String,
+      enum: ["PENDING", "APPROVED", "PARTIALLY_FULFILLED", "FULFILLED", "REJECTED"],
+      default: "PENDING",
+    },
     notes: {
       type: String,
       trim: true,
@@ -52,6 +67,63 @@ const purchaseRequestItemSchema = new mongoose.Schema(
     },
   },
   { _id: true }
+);
+
+const purchaseReceiptItemSchema = new mongoose.Schema(
+  {
+    itemId: {
+      type: mongoose.Schema.Types.ObjectId,
+      required: true,
+    },
+    itemName: {
+      type: String,
+      required: true,
+    },
+    quantityReceived: {
+      type: Number,
+      required: true,
+      min: 0.0001,
+    },
+    unit: {
+      type: String,
+      default: "pcs",
+    },
+    stockItem: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "StockItem",
+      default: null,
+    },
+  },
+  { _id: false }
+);
+
+const purchaseReceiptSchema = new mongoose.Schema(
+  {
+    receiptId: {
+      type: String,
+      required: true,
+    },
+    receivedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+    receivedAt: {
+      type: Date,
+      default: Date.now,
+    },
+    items: {
+      type: [purchaseReceiptItemSchema],
+      default: [],
+    },
+    notes: {
+      type: String,
+      trim: true,
+      default: "",
+      maxlength: 1000,
+    },
+  },
+  { _id: true, timestamps: true }
 );
 
 const purchaseRequestSchema = new mongoose.Schema(
@@ -82,8 +154,26 @@ const purchaseRequestSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["PENDING", "APPROVED", "ORDERED", "FULFILLED", "REJECTED"],
+      enum: [
+        "PENDING",
+        "APPROVED",
+        "ORDERED",
+        "PARTIALLY_FULFILLED",
+        "FULFILLED",
+        "REJECTED",
+        "CANCELLED",
+      ],
       default: "PENDING",
+    },
+    rejectionReason: {
+      type: String,
+      trim: true,
+      default: "",
+      maxlength: 1000,
+    },
+    receipts: {
+      type: [purchaseReceiptSchema],
+      default: [],
     },
     notes: {
       type: String,
